@@ -1,0 +1,35 @@
+
+[package]
+name = "compiler"
+version = "0.1.0"
+authors = ["runner"]
+edition = "2021"
+
+[lib]
+name = "compiler"
+path = "src/lib.rs"
+
+[[bin]]
+name = "main"
+path = "src/bin/main.rs"
+
+[dependencies]
+anyhow = "1"
+
+[dev-dependencies]
+rstest = "0.18.2"
+
+[profile.release]
+opt-level = 3
+lto = true # enable lto
+codegen-units = 1 # increase optimizations
+panic = "abort" # disable stack unwind
+strip = "symbols" # strip bin
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+nursery = "deny"
+pedantic = "deny"
+enum_glob_use = "deny"
