@@ -1,13 +1,25 @@
 
+use std::env;
+
 use compiler::{
   vm::VirtualMachine,
+  repl,
   chunk::{
     Chunk,
     Opcode,
   },
 };
 
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<(), anyhow::Error> {
+  let args: Vec<_> = env::args()
+    .skip(1)
+    .collect();
+  repl::run(&args)?;
+  Ok(())
+}
+
+#[allow(dead_code)]
+fn demo() -> Result<(), anyhow::Error> {
   let mut chunk = Chunk::new();
   let a = chunk.add_constant(1.0);
   let b = chunk.add_constant(2.0);
@@ -27,6 +39,6 @@ fn main() -> anyhow::Result<()> {
   
   let mut vm = VirtualMachine::new(chunk);
   vm.run()?;
-  
+
   Ok(())
 }
