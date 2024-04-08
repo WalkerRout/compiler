@@ -109,7 +109,8 @@ impl VirtualMachine {
           },
           Opcode::Negate => {
             // update in place to avoid pop/push cycle
-            self.stack.stack.last_mut().map(|v| *v = -*v);
+            #[allow(clippy::option_map_unit_fn)]
+            { self.stack.stack.last_mut().map(|v| *v = -*v); }
           },
           Opcode::Add => {
             let b = self.stack.pop();
@@ -174,13 +175,33 @@ mod tests {
     use super::*;
 
     #[rstest]
-    fn compile_error() {
+    fn display_fmt() {
       todo!()
     }
   }
 
   mod stack {
     use super::*;
+
+    #[rstest]
+    fn new() {
+      todo!()
+    }
+
+    #[rstest]
+    fn push() {
+      todo!()
+    }
+
+    #[rstest]
+    fn pop() {
+      todo!()
+    }
+
+    #[rstest]
+    fn reset() {
+      todo!()
+    }
   }
 
   mod virtual_machine {
@@ -193,6 +214,26 @@ mod tests {
 
     #[rstest]
     fn run() {
+      todo!()
+    }
+
+    #[rstest]
+    fn reset_stack() {
+      todo!()
+    }
+
+    #[rstest]
+    fn read_byte() {
+      todo!()
+    }
+
+    #[rstest]
+    fn read_constant() {
+      todo!()
+    }
+
+    #[rstest]
+    fn read_constant_long() {
       todo!()
     }
   }
