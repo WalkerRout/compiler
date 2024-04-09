@@ -49,14 +49,14 @@ impl TryFrom<u8> for Opcode {
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
-struct Line {
-  line: usize,
-  count: usize,
+pub struct Line {
+  pub line: usize,
+  pub count: usize,
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
-struct Lines {
-  lines: Vec<Line>,
+pub struct Lines {
+  pub lines: Vec<Line>,
 }
 
 impl Lines {
@@ -93,7 +93,7 @@ impl Lines {
 pub struct Chunk {
   pub code: Vec<u8>,
   pub constants: Vec<Value>,
-  lines: Lines,
+  pub lines: Lines,
 }
 
 impl Chunk {

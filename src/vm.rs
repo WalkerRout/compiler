@@ -5,9 +5,7 @@ use std::fmt;
 #[allow(unused_imports)]
 use anyhow::anyhow;
 
-use crate::chunk::Value;
-use crate::chunk::Chunk;
-use crate::chunk::Opcode;
+use crate::chunk::{Line, Lines, Chunk, Value, Opcode};
 
 #[derive(Debug)]
 pub enum VirtualMachineError {
@@ -175,8 +173,13 @@ mod tests {
     use super::*;
 
     #[rstest]
-    fn display_fmt() {
-      todo!()
+    #[case(VirtualMachineError::RuntimeError, "RuntimeError")]
+    #[case(VirtualMachineError::CompileError, "CompileError")]
+    fn display_fmt(
+      #[case] variant: VirtualMachineError,
+      #[case] expected_debug_fmt: &str,
+     ) {
+      assert_eq!(format!("{variant:?}"), expected_debug_fmt);
     }
   }
 
@@ -253,19 +256,76 @@ mod tests {
   mod virtual_machine {
     use super::*;
 
-    #[rstest]
-    fn new() {
-      todo!()
+    #[fixture]
+    fn chunk_empty() -> Chunk {
+      Chunk::new()
     }
 
+    #[fixture]
+    fn chunk_add_2() -> Chunk {
+      Chunk {
+        code: vec![
+          Opcode::Constant as u8, 0,
+          Opcode::Constant as u8, 1,
+          Opcode::Add as u8,
+          Opcode::Return as u8,
+        ],
+        constants: vec![1.0, 2.0],
+        lines: Lines {
+          lines: vec![
+            Line { line: 1, count: 2 },
+            Line { line: 2, count: 2 },
+            Line { line: 3, count: 1},
+            Line { line: 4, count: 1},
+          ],
+        }
+      }
+    }
+
+    #[fixture]
+    fn stack_empty() -> Stack {
+      Stack::new()
+    }
+
+    #[fixture]
+    fn virtual_machine_empty() -> VirtualMachine {
+      VirtualMachine {
+        chunk: chunk_empty(),
+        instruction_ptr: 0,
+        stack: stack_empty(),
+      }
+    }
+
+    #[fixture]
+    fn virtual_machine_add_2() -> VirtualMachine {
+      VirtualMachine {
+        chunk: chunk_add_2(),
+        instruction_ptr: 0,
+        stack: stack_empty(),
+      }
+    }
+
+    #[rstest]
+    fn new() {
+      let chunk = chunk_empty();
+      let vm = VirtualMachine::new(chunk);
+      assert_eq!(vm, virtual_machine_empty());
+    }
+
+    // main tests for application logic
     #[rstest]
     fn run() {
       todo!()
     }
 
     #[rstest]
-    fn reset_stack() {
-      todo!()
+    #[case(virtual_machine_empty())]
+    #[case(virtual_machine_add_2())]
+    fn reset_stack(
+      #[case] mut vm: VirtualMachine,
+    ) {
+      vm.reset_stack();
+      assert_eq!(vm.stack, stack_empty());
     }
 
     #[rstest]
