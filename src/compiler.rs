@@ -304,20 +304,20 @@ impl Precedence {
 }
 
 /// TODO: change fn pointer to fn item
-/// - Benchmark `type ParseFn<'cnk, I> = Box<dyn Fn(&mut Parser<'cnk, I>)>;`
-type ParseFn<'cnk, I> = fn(&mut Parser<'cnk, I>);
+/// - Benchmark `type ParserFn<'cnk, I> = Box<dyn Fn(&mut Parser<'cnk, I>)>;`
+type ParserFn<'cnk, I> = fn(&mut Parser<'cnk, I>);
 
 #[derive(Default)]
 struct ParserRule<'cnk, I> {
-  prefix: Option<ParseFn<'cnk, I>>,
-  infix: Option<ParseFn<'cnk, I>>,
+  prefix: Option<ParserFn<'cnk, I>>,
+  infix: Option<ParserFn<'cnk, I>>,
   precedence: Precedence,
 }
 
 impl<'cnk, I> ParserRule<'cnk, I> {
   fn new(
-    prefix: Option<ParseFn<'cnk, I>>, 
-    infix: Option<ParseFn<'cnk, I>>, 
+    prefix: Option<ParserFn<'cnk, I>>, 
+    infix: Option<ParserFn<'cnk, I>>, 
     precedence: Precedence
   ) -> Self {
     Self {
