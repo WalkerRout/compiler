@@ -26,7 +26,7 @@ impl fmt::Display for VirtualMachineError {
 
 const STACK_INITIAL: usize = 256;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct Stack {
   stack: Vec<Value>,
 }
@@ -52,7 +52,7 @@ impl Stack {
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct VirtualMachine {
   chunk: Chunk,
   instruction_ptr: usize,
@@ -183,24 +183,70 @@ mod tests {
   mod stack {
     use super::*;
 
+    #[fixture]
+    fn stack_empty() -> Stack {
+      Stack {
+        stack: Vec::new(),
+      }
+    }
+
+    #[fixture]
+    fn stack_1_value() -> Stack {
+      Stack {
+        stack: vec![1.0],
+      }
+    }
+
+    #[fixture]
+    fn stack_4_values() -> Stack {
+      Stack {
+        stack: vec![1.0, 2.0, 3.0, 4.0],
+      }
+    }
+
     #[rstest]
     fn new() {
-      todo!()
+      let stack = Stack::new();
+      assert_eq!(stack, stack_empty());
+      assert_eq!(stack.stack.capacity(), STACK_INITIAL);
     }
 
     #[rstest]
-    fn push() {
-      todo!()
+    #[case(stack_empty(), 0.0, &[0.0])]
+    #[case(stack_1_value(), 0.0, &[1.0, 0.0])]
+    #[case(stack_4_values(), 0.0, &[1.0, 2.0, 3.0, 4.0, 0.0])]
+    fn push(
+      #[case] mut stack: Stack,
+      #[case] value: Value,
+      #[case] expected_values: &[Value],
+    ) {
+      stack.push(value);
+      assert_eq!(&stack.stack, expected_values);
     }
 
     #[rstest]
-    fn pop() {
-      todo!()
+    #[should_panic]
+    #[case(stack_empty(), 0.0, &[])]
+    #[case(stack_1_value(), 1.0, &[])]
+    #[case(stack_4_values(), 4.0, &[1.0, 2.0, 3.0])]
+    fn pop(
+      #[case] mut stack: Stack,
+      #[case] expected_value: Value,
+      #[case] expected_values: &[Value],
+    ) {
+      assert_eq!(stack.pop(), expected_value);
+      assert_eq!(&stack.stack, expected_values);
     }
 
     #[rstest]
-    fn reset() {
-      todo!()
+    #[case(stack_empty())]
+    #[case(stack_1_value())]
+    #[case(stack_4_values())]
+    fn reset(
+      #[case] mut stack: Stack,
+    ) {
+      stack.reset();
+      assert_eq!(&stack.stack, &[]);
     }
   }
 
