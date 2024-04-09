@@ -135,7 +135,7 @@ impl Chunk {
     while offset < self.code.len() {
       write!(w, "{offset:04} ")?;
       if offset > 0 && self.lines.line(offset) == self.lines.line(offset - 1) {
-        write!(w, "  | ")?;
+        write!(w, "| ")?;
       } else {
         write!(w, "{} ", self.lines.line(offset))?;
       }
@@ -367,45 +367,237 @@ mod tests {
         },
       }
     }
+
+    #[fixture]
+    fn chunk_1_constant() -> Chunk {
+      Chunk { 
+        code: vec![Opcode::Constant as u8, 0],
+        constants: vec![1.0],
+        lines: Lines {
+          lines: vec![Line { line: 1, count: 2 }],
+        },
+      }
+    }
+
+    #[fixture]
+    fn chunk_1_constant_long() -> Chunk {
+      Chunk {
+        code: vec![Opcode::ConstantLong as u8, 0, 0],
+        constants: vec![1.0],
+        lines: Lines {
+          lines: vec![Line { line: 1, count: 3 }]
+        }
+      }
+    }
+
+    #[fixture]
+    fn chunk_2_constant() -> Chunk {
+      Chunk { 
+        code: vec![
+          Opcode::Constant as u8, 0,
+          Opcode::Constant as u8, 1,
+        ],
+        constants: vec![1.0, 2.0],
+        lines: Lines {
+          lines: vec![Line { line: 1, count: 4 }],
+        },
+      }
+    }
+
+    #[fixture]
+    fn chunk_3_constant_3_line() -> Chunk {
+      Chunk { 
+        code: vec![
+          Opcode::Constant as u8, 0,
+          Opcode::Constant as u8, 1,
+          Opcode::Constant as u8, 2,
+        ],
+        constants: vec![1.0, 2.0, 3.0],
+        lines: Lines {
+          lines: vec![
+            Line { line: 1, count: 2 },
+            Line { line: 2, count: 2 },
+            Line { line: 3, count: 2 },
+          ],
+        },
+      }
+    }
+
+    #[fixture]
+    fn chunk_2_constant_add_return_4_line() -> Chunk {
+      Chunk { 
+        code: vec![
+          Opcode::Constant as u8, 0,
+          Opcode::Constant as u8, 1,
+          Opcode::Add as u8,
+          Opcode::Return as u8,
+        ],
+        constants: vec![1.0, 2.0],
+        lines: Lines {
+          lines: vec![
+            Line { line: 1, count: 2 },
+            Line { line: 2, count: 2 },
+            Line { line: 3, count: 1 },
+            Line { line: 4, count: 1 },
+          ],
+        },
+      }
+    }
     
     #[rstest]
     fn new() {
-      todo!()
+      let chunk = Chunk::new();
+      assert_eq!(chunk, chunk_empty());
     }
 
     #[rstest]
-    fn add_constant() {
-      todo!()
+    #[case(chunk_empty(), 0.0, &[0.0])]
+    #[case(chunk_1_constant(), 0.0, &[1.0, 0.0])]
+    #[case(chunk_2_constant(), 0.0, &[1.0, 2.0, 0.0])]
+    #[case(chunk_3_constant_3_line(), 0.0, &[1.0, 2.0, 3.0, 0.0])]
+    #[case(chunk_2_constant_add_return_4_line(), 0.0, &[1.0, 2.0, 0.0])]
+    fn add_constant(
+      #[case] mut chunk: Chunk,
+      #[case] new_constant: Value,
+      #[case] expected_constants: &[Value],
+    ) {
+      let c = chunk.add_constant(new_constant);
+      assert_eq!(c, expected_constants.len()-1);
+      assert_eq!(&chunk.constants, expected_constants);
     }
 
     #[rstest]
-    fn write_byte() {
-      todo!()
+    #[case(chunk_empty(), 0, 1, Line { line: 1, count: 1 })]
+    #[case(chunk_1_constant(), 0, 1, Line { line: 1, count: 3 })]
+    #[case(chunk_1_constant(), 0, 2, Line { line: 2, count: 1 })]
+    #[case(chunk_2_constant(), 0, 1, Line { line: 1, count: 5 })]
+    #[case(chunk_2_constant(), 0, 2, Line { line: 2, count: 1 })]
+    #[case(chunk_3_constant_3_line(), 0, 3, Line { line: 3, count: 3 })]
+    #[case(chunk_3_constant_3_line(), 0, 4, Line { line: 4, count: 1 })]
+    #[case(chunk_2_constant_add_return_4_line(), 0, 4, Line { line: 4, count: 2 })]
+    #[case(chunk_2_constant_add_return_4_line(), 0, 5, Line { line: 5, count: 1 })]
+    fn write_byte(
+      #[case] mut chunk: Chunk,
+      #[case] byte: u8,
+      #[case] line_n: usize,
+      #[case] expected_line: Line,
+    ) {
+      chunk.write_byte(byte, line_n);
+      assert_eq!(chunk.code.last(), Some(byte).as_ref());
+      assert_eq!(chunk.lines.lines.last(), Some(expected_line).as_ref());
+    }
+
+    #[derive(Debug, Default, Clone)]
+    struct StringWriter(String);
+    impl io::Write for StringWriter {
+      fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let s = String::from_utf8_lossy(buf);
+        self.0.push_str(&s);
+        Ok(buf.len())
+      }
+
+      fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+      }
     }
 
     #[rstest]
-    fn disassemble() {
-      todo!()
+    #[case(chunk_empty(), r"== chunk ==
+")]
+    #[case(chunk_1_constant(), r"== chunk ==
+0000 1 OP_CONSTANT @constants:0 1
+")]
+    #[case(chunk_2_constant(), r"== chunk ==
+0000 1 OP_CONSTANT @constants:0 1
+0002 | OP_CONSTANT @constants:1 2
+")]
+    #[case(chunk_3_constant_3_line(), r"== chunk ==
+0000 1 OP_CONSTANT @constants:0 1
+0002 2 OP_CONSTANT @constants:1 2
+0004 3 OP_CONSTANT @constants:2 3
+")]
+    fn disassemble(
+      #[case] chunk: Chunk,
+      #[case] expected_disassembly: &str,
+    ) {
+      let mut buffer = StringWriter::default();
+      // panic on failure
+      chunk.disassemble(&mut buffer, "chunk").unwrap();
+      assert_eq!(buffer.0, expected_disassembly);
     }
 
     #[rstest]
-    fn disassemble_opcodes() {
-      todo!()
+    #[should_panic]
+    #[case(chunk_empty(), 0, "")] // no opcodes in empty chunk, invalid offset
+    #[case(chunk_1_constant(), 0, "OP_CONSTANT @constants:0 1\n")]
+    #[case(chunk_2_constant(), 0, "OP_CONSTANT @constants:0 1\n")]
+    #[case(chunk_2_constant(), 2, "OP_CONSTANT @constants:1 2\n")]
+    #[case(chunk_3_constant_3_line(), 0, "OP_CONSTANT @constants:0 1\n")]
+    #[case(chunk_3_constant_3_line(), 2, "OP_CONSTANT @constants:1 2\n")]
+    #[case(chunk_3_constant_3_line(), 4, "OP_CONSTANT @constants:2 3\n")]
+    #[case(chunk_2_constant_add_return_4_line(), 0, "OP_CONSTANT @constants:0 1\n")]
+    #[case(chunk_2_constant_add_return_4_line(), 2, "OP_CONSTANT @constants:1 2\n")]
+    #[case(chunk_2_constant_add_return_4_line(), 4, "OP_ADD\n")]
+    #[case(chunk_2_constant_add_return_4_line(), 5, "OP_RETURN\n")]
+    fn disassemble_opcodes(
+      #[case] chunk: Chunk,
+      #[case] offset: usize,
+      #[case] expected_disassembly: &str,
+    ) {
+      let mut buffer = StringWriter::default();
+      chunk.disassemble_opcodes(&mut buffer, offset).unwrap();
+      assert_eq!(buffer.0, expected_disassembly);
     }
 
     #[rstest]
-    fn disassemble_single() {
-      todo!()
+    // does not use self in disassemble_single, empty chunk irrelevant
+    #[case(chunk_empty(), 0, "OP_RETURN", "OP_RETURN\n")]
+    #[case(chunk_empty(), 1, "OP_CONSTANT", "OP_CONSTANT\n")]
+    #[case(chunk_empty(), 2, "OP_CONSTANT_LONG", "OP_CONSTANT_LONG\n")]
+    #[case(chunk_empty(), 5, "OP_NEGATE", "OP_NEGATE\n")]
+    #[case(chunk_empty(), 10, "OP_ADD", "OP_ADD\n")]
+    fn disassemble_single(
+      #[case] chunk: Chunk,
+      #[case] offset: usize,
+      #[case] instruction_name: &str,
+      #[case] expected_disassembly: &str,
+    ) {
+      let mut buffer = StringWriter::default();
+      let new_offset = chunk.disassemble_single(&mut buffer, offset, instruction_name).unwrap();
+      assert_eq!(new_offset, offset as usize + 1);
+      assert_eq!(buffer.0, expected_disassembly);
     }
 
     #[rstest]
-    fn disassemble_constant() {
-      todo!()
+    #[should_panic]
+    #[case(chunk_empty(), 0, "")]
+    #[case(chunk_1_constant(), 0, "OP_CONSTANT @constants:0 1\n")]
+    #[case(chunk_2_constant(), 0, "OP_CONSTANT @constants:0 1\n")]
+    #[case(chunk_3_constant_3_line(), 0, "OP_CONSTANT @constants:0 1\n")]
+    fn disassemble_constant(
+      #[case] chunk: Chunk,
+      #[case] offset: usize,
+      #[case] expected_disassembly: &str,
+    ) {
+      let mut buffer = StringWriter::default();
+      let new_offset = chunk.disassemble_constant(&mut buffer, offset, "OP_CONSTANT").unwrap();
+      assert_eq!(new_offset, offset + 2);
+      assert_eq!(buffer.0, expected_disassembly);
     }
 
     #[rstest]
-    fn disassemble_constant_long() {
-      todo!()
+    #[should_panic]
+    #[case(chunk_empty(), 0, "")]
+    #[case(chunk_1_constant_long(), 0, "OP_CONSTANT_LONG @constants:0 1\n")]
+    fn disassemble_constant_long(
+      #[case] chunk: Chunk,
+      #[case] offset: usize,
+      #[case] expected_disassembly: &str,
+    ) {
+      let mut buffer = StringWriter::default();
+      let new_offset = chunk.disassemble_constant_long(&mut buffer, offset, "OP_CONSTANT_LONG").unwrap();
+      assert_eq!(new_offset, offset + 3);
+      assert_eq!(buffer.0, expected_disassembly);
     }
   }
 }
