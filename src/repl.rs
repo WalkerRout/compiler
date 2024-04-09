@@ -6,13 +6,7 @@ use std::io::{self, Write};
 use anyhow::anyhow;
 
 use crate::vm::VirtualMachine;
-use crate::chunk::Chunk;
 use crate::compiler::Compiler;
-
-pub enum Target {
-  File,
-  CommandLine,
-}
 
 /// Run the compiler with either a REPL or a file, based on args count
 ///
@@ -25,7 +19,7 @@ pub fn run(args: &[String]) -> Result<(), anyhow::Error> {
   match args.len() {
     0 => run_repl()?,
     1 => run_file(&args[0])?,
-    _ => eprintln!("Usage: compiler <file_name>"), 
+    _ => eprintln!("Usage: compiler <file_name>"),
   }
   
   Ok(())
@@ -36,6 +30,7 @@ pub fn run(args: &[String]) -> Result<(), anyhow::Error> {
 /// # Errors
 ///
 /// Will return `Err` if the following return an error;
+/// - `flush()`
 /// - `interpret`
 fn run_repl() -> Result<(), anyhow::Error> {
   loop {
@@ -69,11 +64,9 @@ fn run_file<A: AsRef<str>>(file_path: A) -> Result<(), anyhow::Error> {
 ///
 /// Returns result of compile in either variant
 fn interpret<A: AsRef<str>>(command: A) -> Result<(), anyhow::Error> {
-  let mut chunk = Chunk::new();
-
   let mut compiler = Compiler::new(command.as_ref());
-  compiler.compile(&mut chunk)?;
-
+  let chunk = compiler.compile()?;
+  
   let mut vm = VirtualMachine::new(chunk);
   vm.run()
 }

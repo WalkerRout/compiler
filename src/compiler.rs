@@ -1,10 +1,12 @@
 
+use std::io;
 use std::fmt;
+use std::cell::Cell;
 use std::iter::Peekable;
 
 use anyhow::anyhow;
 
-use crate::chunk::Chunk;
+use crate::chunk::{Chunk, Value, Opcode};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
@@ -47,6 +49,7 @@ pub enum TokenType {
   True,
   Var,
   While,
+  Eof,
   Invalid(String), // Todo: store err enum variants
 }
 
@@ -116,6 +119,7 @@ impl fmt::Display for TokenType {
       Self::True => write!(f, "true"),
       Self::Var => write!(f, "var"),
       Self::While => write!(f, "while"),
+      Self::Eof => write!(f, "EOF"),
       Self::Invalid(s) => write!(f, "invalid@{s}"),
     }
   }
@@ -192,9 +196,9 @@ impl<'src> Scanner<'src> {
         ch if ch.is_ascii_whitespace() => continue,
         _ => TokenType::Invalid(ch.into()),
       };
-      tokens.push(Token { line: self.line, token_type });
+      tokens.push(Token { line: self.line, token_type, });
     }
-
+    tokens.push(Token { line: self.line, token_type: TokenType::Eof, });
     tokens
   }
 
@@ -265,19 +269,311 @@ impl<'src> Scanner<'src> {
   }
 }
 
-#[derive(Debug, Clone)]
-struct Parser {
-  current: Token,
-  previous: Token,
-  tokens: Vec<Token>,
+#[repr(u8)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Precedence {
+  #[default]
+  None,
+  Assignment,  // =
+  Or,          // or
+  And,         // and
+  Equality,    // == !=
+  Comparison,  // < > <= >=
+  Term,        // + -
+  Factor,      // * /
+  Unary,       // ! -
+  Call,        // . ()
+  Primary,
 }
 
-impl Parser {
-  fn new(tokens: Vec<Token>) -> Self {
+impl Precedence {
+  const fn into_higher(self) -> Self {
+    match self {
+      Self::None => Self::Assignment,
+      Self::Assignment => Self::Or,
+      Self::Or => Self::And,
+      Self::And => Self::Equality,
+      Self::Equality => Self::Comparison,
+      Self::Comparison => Self::Term,
+      Self::Term => Self::Factor,
+      Self::Factor => Self::Unary,
+      Self::Unary => Self::Call,
+      Self::Call | Self::Primary => Self::Primary,
+    }
+  }
+}
+
+/// TODO: change fn pointer to fn item
+type ParseFn<'cnk, I> = fn(&mut Parser<'cnk, I>);
+
+#[derive(Default)]
+struct ParserRule<'cnk, I> {
+  prefix: Option<ParseFn<'cnk, I>>,
+  infix: Option<ParseFn<'cnk, I>>,
+  precedence: Precedence,
+}
+
+impl<'cnk, I> ParserRule<'cnk, I> {
+  fn new(prefix: Option<ParseFn<'cnk, I>>, infix: Option<ParseFn<'cnk, I>>, precedence: Precedence) -> Self {
     Self {
-      current: tokens[0].clone(),
-      previous: tokens[0].clone(),
-      tokens,
+      prefix,
+      infix,
+      precedence,
+    }
+  }
+}
+
+impl<'cnk, I> fmt::Debug for ParserRule<'cnk, I> {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "ParseRule {{ ..., ..., {:?}, }} ", self.precedence)
+  }
+}
+
+#[derive(Debug)]
+struct Parser<'cnk, It> {
+  current: Token,
+  previous: Token,
+  tokens: It,
+  had_error: Cell<bool>,
+  panic_mode: Cell<bool>,
+  chunk: &'cnk mut Chunk,
+}
+
+impl<'cnk, It> Parser<'cnk, It>
+  where It: Iterator<Item = Token>, {
+  fn new<T>(tokens: T, chunk: &'cnk mut Chunk) -> Self 
+    where T: IntoIterator<Item = It::Item, IntoIter = It>, {
+    let mut this = Self {
+      current: Token { line: 1, token_type: TokenType::Eof, },
+      previous: Token { line: 1, token_type: TokenType::Eof, },
+      tokens: tokens.into_iter(),
+      had_error: Cell::new(false),
+      panic_mode: Cell::new(false),
+      chunk,
+    };
+    this.advance();
+    this
+  }
+
+  fn advance(&mut self) {
+    self.previous = self.current.clone();
+    loop {
+      if let Some(t) = self.tokens.next() {
+        self.current = t;
+      }
+      match self.current.token_type {
+        TokenType::Invalid(_) => {},
+        _ => break,
+      }
+      self.error_at_current(&self.current.to_string());
+    }
+  }
+
+  fn consume_if_eq(&mut self, token_type: &TokenType, msg: &str) {
+    if token_type == &self.current.token_type {
+      self.advance();
+      return;
+    }
+    self.error_at_current(msg);
+  }
+
+  fn parse_expression(&mut self) {
+    self.parse_precedence(Precedence::Assignment);
+  }
+
+  fn parse_number(&mut self) {
+    if let TokenType::Number(n) = self.previous.token_type {
+      let value = n;
+      self.emit_constant(value);
+    } else {
+      self.error("not a number");
+    }
+  }
+
+  fn parse_grouping(&mut self) {
+    self.parse_expression();
+    self.consume_if_eq(&TokenType::RightParen, "expect ')' after expression");
+  }
+
+  fn parse_unary(&mut self) {
+    let token_type = self.previous.token_type.clone();
+    
+    self.parse_precedence(Precedence::Unary);
+
+    match token_type {
+      TokenType::Minus => self.emit_byte(Opcode::Negate as u8),
+      _ => self.error("not a unary operator"),
+    }
+  }
+
+  fn parse_binary(&mut self) {
+    let token_type = self.previous.token_type.clone();
+    let token_parse_rule = Self::get_rule(&token_type);
+
+    self.parse_precedence(token_parse_rule.precedence.into_higher());
+
+    match token_type {
+      TokenType::Plus => self.emit_byte(Opcode::Add as u8),
+      TokenType::Minus => self.emit_byte(Opcode::Subtract as u8),
+      TokenType::Star => self.emit_byte(Opcode::Multiply as u8),
+      TokenType::Slash => self.emit_byte(Opcode::Divide as u8),
+      _ => self.error("not a binary operator"),
+    }
+  }
+
+  fn parse_precedence(&mut self, precedence: Precedence) {
+    self.advance();
+    
+    let prefix_rule = Self::get_rule(&self.previous.token_type).prefix;
+    if let Some(rule) = prefix_rule {
+      rule(self);
+    } else {
+      self.error("expect expression");
+      return;
+    }
+
+    while precedence as u8 <= Self::get_rule(&self.current.token_type).precedence as u8 {
+      self.advance();
+      let infix_rule = Self::get_rule(&self.previous.token_type).infix;
+      if let Some(rule) = infix_rule {
+        rule(self);
+      }
+    }
+  }
+
+  fn emit_return(&mut self) {
+    self.emit_byte(Opcode::Return as u8);
+  }
+
+  fn emit_constant(&mut self, value: Value) {
+    let constant = self.make_constant(value);
+    self.emit_2_bytes(Opcode::Constant as u8, constant);
+  }
+
+  fn make_constant(&mut self, value: Value) -> u8 {
+    let constant = self.chunk.add_constant(value);
+    if constant > u8::MAX.into() {
+      self.error("too many constants in one chunk");
+      return 0;
+    }
+    // safe to unwrap, we check that constant is <= u8::MAX
+    u8::try_from(constant).unwrap()
+  }
+
+  fn emit_byte(&mut self, byte: u8) {
+    self.chunk.write_byte(byte, self.previous.line);
+  }
+
+  fn emit_2_bytes(&mut self, byte_a: u8, byte_b: u8) {
+    self.emit_byte(byte_a);
+    self.emit_byte(byte_b);
+  }
+
+  fn error(&self, msg: &str) {
+    self.error_at(&self.previous, msg);
+  }
+
+  fn error_at_current(&self, msg: &str) {
+    self.error_at(&self.current, msg);
+  }
+
+  fn error_at(&self, token: &Token, msg: &str) {
+    if self.panic_mode.get() {
+      return;
+    }
+    self.panic_mode.set(true);
+    
+    eprint!("[line {}] Error", token.line);
+
+    match token.token_type {
+      TokenType::Eof => eprint!(" at end"),
+      _ => eprint!(" at '{token:?}'"),
+    }
+
+    eprintln!(": {msg}");
+    self.had_error.set(true);
+  }
+
+  fn get_rule(token_type: &TokenType) -> ParserRule<'cnk, It> {
+    #[allow(clippy::match_same_arms)]
+    match token_type {
+      TokenType::LeftParen => ParserRule::new(Some(Self::parse_grouping), None, Precedence::None),
+      TokenType::RightParen => ParserRule::new(None, None, Precedence::None),
+      TokenType::LeftBrace => ParserRule::new(None, None, Precedence::None),
+      TokenType::RightBrace => 
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Comma => 
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Dot => 
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Minus =>
+        ParserRule::new(Some(Self::parse_unary), Some(Self::parse_binary), Precedence::Term),
+      TokenType::Plus =>
+        ParserRule::new(None, Some(Self::parse_binary), Precedence::Term),
+      TokenType::Semicolon => 
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Slash => 
+        ParserRule::new(None, Some(Self::parse_binary), Precedence::Factor),
+      TokenType::Star => 
+        ParserRule::new(None, Some(Self::parse_binary), Precedence::Factor),
+      TokenType::Bang =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::BangEqual =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Equal =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::EqualEqual =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Greater =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::GreaterEqual =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Less =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::LessEqual =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Identifier(_) =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::StringLiteral(_) =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Number(_) =>
+        ParserRule::new(Some(Self::parse_number), None, Precedence::None),
+      TokenType::And =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Class =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Else =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::False =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::For =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Fun =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::If =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Nil =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Or =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Print =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Return =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Super =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::This =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::True =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Var =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::While =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Eof =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Invalid(_) =>
+        ParserRule::new(None, None, Precedence::None),
     }
   }
 }
@@ -300,23 +596,25 @@ impl<'src> Compiler<'src> {
   /// # Errors
   ///
   /// No errors, possible, Result is a placeholder
-  pub fn compile(&mut self, _chunk: &mut Chunk) -> Result<(), anyhow::Error> {
+  pub fn compile(&mut self) -> Result<Chunk, anyhow::Error> {
+    let mut chunk = Chunk::new();
     let mut scanner = Scanner::new(self.source);
-    let mut parser = Parser::new(scanner.scan_tokens());
-    let tokens = parser.tokens;
+    let mut parser = Parser::new(scanner.scan_tokens(), &mut chunk);
+    parser.parse_expression();
+    parser.consume_if_eq(&TokenType::Eof, "expected EOF");
+    parser.emit_return();
 
-    let mut prev_line = 0;
-    for token in tokens {
-      if token.line == prev_line {
-        print!("|\t");
-      } else {
-        print!("{}\t", token.line);
-        prev_line = token.line;
-      }
-      println!("'{:?}'", token.token_type); 
+    let parser_had_error = parser.had_error.get();
+
+    if cfg!(debug_assertions) && !parser_had_error {
+      chunk.disassemble(&mut io::stdout(), "code")?;
     }
 
-    Ok(())
+    if parser_had_error { 
+      Err(anyhow!("parser had error"))
+    } else {
+      Ok(chunk)
+    }
   }
 }
 

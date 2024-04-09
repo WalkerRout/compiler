@@ -30,6 +30,6 @@ strip = "symbols" # strip bin
 unsafe_code = "forbid"
 
 [lints.clippy]
-nursery = "deny"
-pedantic = "deny"
-enum_glob_use = "deny"
+nursery = { level = "deny", priority = 0 }
+pedantic = { level = "deny", priority = 2 }
+enum_glob_use = { level = "deny", priority = 1 }
