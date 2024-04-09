@@ -502,14 +502,17 @@ impl<'cnk, It> Parser<'cnk, It>
   fn get_rule(token_type: &TokenType) -> ParserRule<'cnk, It> {
     #[allow(clippy::match_same_arms)]
     match token_type {
-      TokenType::LeftParen => ParserRule::new(Some(Self::parse_grouping), None, Precedence::None),
-      TokenType::RightParen => ParserRule::new(None, None, Precedence::None),
-      TokenType::LeftBrace => ParserRule::new(None, None, Precedence::None),
-      TokenType::RightBrace => 
+      TokenType::LeftParen =>
+        ParserRule::new(Some(Self::parse_grouping), None, Precedence::None),
+      TokenType::RightParen =>
         ParserRule::new(None, None, Precedence::None),
-      TokenType::Comma => 
+      TokenType::LeftBrace =>
         ParserRule::new(None, None, Precedence::None),
-      TokenType::Dot => 
+      TokenType::RightBrace =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Comma =>
+        ParserRule::new(None, None, Precedence::None),
+      TokenType::Dot =>
         ParserRule::new(None, None, Precedence::None),
       TokenType::Minus =>
         ParserRule::new(Some(Self::parse_unary), Some(Self::parse_binary), Precedence::Term),
