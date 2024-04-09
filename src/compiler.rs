@@ -304,6 +304,7 @@ impl Precedence {
 }
 
 /// TODO: change fn pointer to fn item
+/// - Benchmark `type ParseFn<'cnk, I> = Box<dyn Fn(&mut Parser<'cnk, I>)>;`
 type ParseFn<'cnk, I> = fn(&mut Parser<'cnk, I>);
 
 #[derive(Default)]
