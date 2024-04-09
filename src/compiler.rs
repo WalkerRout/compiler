@@ -314,7 +314,11 @@ struct ParserRule<'cnk, I> {
 }
 
 impl<'cnk, I> ParserRule<'cnk, I> {
-  fn new(prefix: Option<ParseFn<'cnk, I>>, infix: Option<ParseFn<'cnk, I>>, precedence: Precedence) -> Self {
+  fn new(
+    prefix: Option<ParseFn<'cnk, I>>, 
+    infix: Option<ParseFn<'cnk, I>>, 
+    precedence: Precedence
+  ) -> Self {
     Self {
       prefix,
       infix,
