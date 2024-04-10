@@ -34,12 +34,9 @@ impl Value {
     matches!(self, Self::String(_))
   }
 
-  pub fn is_falsy(&self) -> bool {
-    match self {
-      Self::Nil => true,
-      Self::Bool(false) => true,
-      _ => false,
-    }
+  #[allow(clippy::must_use_candidate)]
+  pub const fn is_falsy(&self) -> bool {
+    matches!(self, Self::Nil | Self::Bool(false))
   }
 
   //pub fn is_truthy(&self) -> bool {

@@ -179,7 +179,7 @@ impl VirtualMachine {
           Opcode::Not => {
             let v = self.stack.pop();
             let is_falsy = v.is_falsy();
-            self.stack.push(Value::Bool(is_falsy))
+            self.stack.push(Value::Bool(is_falsy));
           },
           Opcode::Equal => {
             let b = self.stack.pop();
@@ -217,10 +217,6 @@ impl VirtualMachine {
     }
 
     Ok(())
-  }
-
-  fn reset_stack(&mut self) {
-    self.stack.reset();
   }
 
   fn read_byte(&mut self) -> u8 {
@@ -409,16 +405,6 @@ mod tests {
     #[rstest]
     fn run() {
       todo!()
-    }
-
-    #[rstest]
-    #[case(virtual_machine_empty())]
-    #[case(virtual_machine_add_2())]
-    fn reset_stack(
-      #[case] mut vm: VirtualMachine,
-    ) {
-      vm.reset_stack();
-      assert_eq!(vm.stack, stack_empty());
     }
 
     #[rstest]

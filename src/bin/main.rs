@@ -3,17 +3,15 @@ use std::env;
 
 use compiler::repl;
 
-fn main() -> Result<(), anyhow::Error> {
+fn main() {
   let args: Vec<_> = env::args()
     .skip(1)
     .collect();
-    
+
   loop {
     match repl::run(&args) {
-      Ok(_) => break,
+      Ok(()) => break,
       Err(_) => continue,
     }
   }
-
-  Ok(())
 }
