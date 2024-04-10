@@ -388,7 +388,7 @@ impl<'cnk, It> Parser<'cnk, It>
 
   fn parse_number(&mut self) {
     if let TokenType::Number(n) = self.previous.token_type {
-      let value = n;
+      let value = Value::Number(n);
       self.emit_constant(value);
     } else {
       self.error("not a number");
@@ -407,6 +407,7 @@ impl<'cnk, It> Parser<'cnk, It>
 
     match token_type {
       TokenType::Minus => self.emit_byte(Opcode::Negate as u8),
+      TokenType::Bang => self.emit_byte(Opcode::Not as u8),
       _ => self.error("not a unary operator"),
     }
   }
@@ -422,6 +423,12 @@ impl<'cnk, It> Parser<'cnk, It>
       TokenType::Minus => self.emit_byte(Opcode::Subtract as u8),
       TokenType::Star => self.emit_byte(Opcode::Multiply as u8),
       TokenType::Slash => self.emit_byte(Opcode::Divide as u8),
+      TokenType::BangEqual => self.emit_2_bytes(Opcode::Equal as u8, Opcode::Not as u8),
+      TokenType::EqualEqual => self.emit_byte(Opcode::Equal as u8),
+      TokenType::Less => self.emit_byte(Opcode::Less as u8),
+      TokenType::LessEqual => self.emit_2_bytes(Opcode::Greater as u8, Opcode::Not as u8),
+      TokenType::Greater => self.emit_byte(Opcode::Greater as u8),
+      TokenType::GreaterEqual => self.emit_2_bytes(Opcode::Less as u8, Opcode::Not as u8),
       _ => self.error("not a binary operator"),
     }
   }
@@ -433,7 +440,7 @@ impl<'cnk, It> Parser<'cnk, It>
     if let Some(rule) = prefix_rule {
       rule(self);
     } else {
-      self.error("expect expression");
+      self.error("expect expression, no rule defined");
       return;
     }
 
@@ -443,6 +450,24 @@ impl<'cnk, It> Parser<'cnk, It>
       if let Some(rule) = infix_rule {
         rule(self);
       }
+    }
+  }
+
+  fn parse_literal(&mut self) {
+    match self.previous.token_type {
+      TokenType::Nil => self.emit_byte(Opcode::Nil as u8),
+      TokenType::True => self.emit_byte(Opcode::True as u8),
+      TokenType::False => self.emit_byte(Opcode::False as u8),
+      _ => self.error("expect literal"),
+    }
+  }
+
+  fn parse_string(&mut self) {
+    if let TokenType::StringLiteral(ref mut s) = self.previous.token_type {
+      let s = std::mem::take(s);
+      self.emit_constant(Value::String(s));
+    } else {
+      self.error("expect string");
     }
   }
 
@@ -525,25 +550,25 @@ impl<'cnk, It> Parser<'cnk, It>
       TokenType::Star => 
         ParserRule::new(None, Some(Self::parse_binary), Precedence::Factor),
       TokenType::Bang =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::BangEqual =>
-        ParserRule::new(None, None, Precedence::None),
+        ParserRule::new(Some(Self::parse_unary), None, Precedence::None),
       TokenType::Equal =>
         ParserRule::new(None, None, Precedence::None),
+      TokenType::BangEqual =>
+        ParserRule::new(None, Some(Self::parse_binary), Precedence::Equality),
       TokenType::EqualEqual =>
-        ParserRule::new(None, None, Precedence::None),
+        ParserRule::new(None, Some(Self::parse_binary), Precedence::Equality),
       TokenType::Greater =>
-        ParserRule::new(None, None, Precedence::None),
+        ParserRule::new(None, Some(Self::parse_binary), Precedence::Comparison),
       TokenType::GreaterEqual =>
-        ParserRule::new(None, None, Precedence::None),
+        ParserRule::new(None, Some(Self::parse_binary), Precedence::Comparison),
       TokenType::Less =>
-        ParserRule::new(None, None, Precedence::None),
+        ParserRule::new(None, Some(Self::parse_binary), Precedence::Comparison),
       TokenType::LessEqual =>
-        ParserRule::new(None, None, Precedence::None),
+        ParserRule::new(None, Some(Self::parse_binary), Precedence::Comparison),
       TokenType::Identifier(_) =>
         ParserRule::new(None, None, Precedence::None),
       TokenType::StringLiteral(_) =>
-        ParserRule::new(None, None, Precedence::None),
+        ParserRule::new(Some(Self::parse_string), None, Precedence::None),
       TokenType::Number(_) =>
         ParserRule::new(Some(Self::parse_number), None, Precedence::None),
       TokenType::And =>
@@ -553,7 +578,7 @@ impl<'cnk, It> Parser<'cnk, It>
       TokenType::Else =>
         ParserRule::new(None, None, Precedence::None),
       TokenType::False =>
-        ParserRule::new(None, None, Precedence::None),
+        ParserRule::new(Some(Self::parse_literal), None, Precedence::None),
       TokenType::For =>
         ParserRule::new(None, None, Precedence::None),
       TokenType::Fun =>
@@ -561,7 +586,7 @@ impl<'cnk, It> Parser<'cnk, It>
       TokenType::If =>
         ParserRule::new(None, None, Precedence::None),
       TokenType::Nil =>
-        ParserRule::new(None, None, Precedence::None),
+        ParserRule::new(Some(Self::parse_literal), None, Precedence::None),
       TokenType::Or =>
         ParserRule::new(None, None, Precedence::None),
       TokenType::Print =>
@@ -573,7 +598,7 @@ impl<'cnk, It> Parser<'cnk, It>
       TokenType::This =>
         ParserRule::new(None, None, Precedence::None),
       TokenType::True =>
-        ParserRule::new(None, None, Precedence::None),
+        ParserRule::new(Some(Self::parse_literal), None, Precedence::None),
       TokenType::Var =>
         ParserRule::new(None, None, Precedence::None),
       TokenType::While =>

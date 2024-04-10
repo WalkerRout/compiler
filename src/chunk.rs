@@ -4,7 +4,77 @@ use std::fmt;
 
 use anyhow::anyhow;
 
-pub type Value = f64;
+//pub type Value = f64;
+#[derive(Debug, Clone, PartialEq)]
+pub enum Value {
+  Nil,
+  Bool(bool),
+  Number(f64),
+  String(String),
+}
+
+impl Value {
+  #[allow(clippy::must_use_candidate)]
+  pub const fn is_nil(&self) -> bool {
+    matches!(self, Self::Nil)
+  }
+
+  #[allow(clippy::must_use_candidate)]
+  pub const fn is_bool(&self) -> bool {
+    matches!(self, Self::Bool(_))
+  }
+
+  #[allow(clippy::must_use_candidate)]
+  pub const fn is_number(&self) -> bool {
+    matches!(self, Self::Number(_))
+  }
+
+  #[allow(clippy::must_use_candidate)]
+  pub const fn is_string(&self) -> bool {
+    matches!(self, Self::String(_))
+  }
+
+  pub fn is_falsy(&self) -> bool {
+    match self {
+      Self::Nil => true,
+      Self::Bool(false) => true,
+      _ => false,
+    }
+  }
+
+  //pub fn is_truthy(&self) -> bool {
+  //  !self.is_falsy()
+  //}
+}
+
+impl From<bool> for Value {
+  fn from(b: bool) -> Self {
+    Self::Bool(b)
+  }
+}
+
+impl From<f64> for Value {
+  fn from(f: f64) -> Self {
+    Self::Number(f)
+  }
+}
+
+impl From<String> for Value {
+  fn from(s: String) -> Self {
+    Self::String(s)
+  }
+}
+
+impl fmt::Display for Value {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    match self {
+      Self::Nil => write!(f, "nil"),
+      Self::Bool(b) => write!(f, "{b}"),
+      Self::Number(n) => write!(f, "{n}"),
+      Self::String(s) => write!(f, "{s}"),
+    }
+  }
+}
 
 /// Assert certain trait implementations exist on Value at compile time:
 ///
@@ -27,6 +97,13 @@ pub enum Opcode {
   Subtract = 5,
   Multiply = 6,
   Divide = 7,
+  Nil = 8,
+  True = 9,
+  False = 10,
+  Not = 11,
+  Equal = 12,
+  Less = 13,
+  Greater = 14,
 }
 
 impl TryFrom<u8> for Opcode {
@@ -42,19 +119,26 @@ impl TryFrom<u8> for Opcode {
       5 => Self::Subtract,
       6 => Self::Multiply,
       7 => Self::Divide,
+      8 => Self::Nil,
+      9 => Self::True,
+      10 => Self::False,
+      11 => Self::Not,
+      12 => Self::Equal,
+      13 => Self::Less,
+      14 => Self::Greater,
       _ => return Err(anyhow!("invalid opcode")),
     };
     Ok(result)
   }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct Line {
   pub line: usize,
   pub count: usize,
 }
 
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Lines {
   pub lines: Vec<Line>,
 }
@@ -64,7 +148,9 @@ impl Lines {
     Self { lines: Vec::new(), }
   }
 
-  fn line(&self, offset: usize) -> usize {
+  /// Get a line given the offset from 0
+  #[allow(clippy::must_use_candidate)]
+  pub fn line(&self, offset: usize) -> usize {
     let mut result = 0;
     let mut prev_count = 0;
     for line in &self.lines {
@@ -77,7 +163,9 @@ impl Lines {
     result
   }
 
-  fn write_line(&mut self, line: usize) {
+  /// Write a new line into the collection, incrementing the previous count if they are the same
+  #[allow(clippy::missing_panics_doc)] // unwrap cannot fail
+  pub fn write_line(&mut self, line: usize) {
     let previous_line = self.lines.last().map(|l| l.line);
     // check if line is same as previous, otherwise write a new line
     if Some(line) == previous_line {
@@ -170,6 +258,13 @@ impl Chunk {
           Opcode::Subtract => self.disassemble_single(w, offset, "OP_SUBTRACT")?,
           Opcode::Multiply => self.disassemble_single(w, offset, "OP_MULTIPLY")?,
           Opcode::Divide => self.disassemble_single(w, offset, "OP_DIVIDE")?,
+          Opcode::Nil => self.disassemble_single(w, offset, "OP_NIL")?,
+          Opcode::True => self.disassemble_single(w, offset, "OP_TRUE")?,
+          Opcode::False => self.disassemble_single(w, offset, "OP_FALSE")?,
+          Opcode::Not => self.disassemble_single(w, offset, "OP_NOT")?,
+          Opcode::Equal => self.disassemble_single(w, offset, "OP_EQUAL")?,
+          Opcode::Less => self.disassemble_single(w, offset, "OP_LESS")?,
+          Opcode::Greater => self.disassemble_single(w, offset, "OP_GREATER")?,
         }
       } else {
         writeln!(w, "OP_INVALID @offset:{offset}")?;
@@ -210,7 +305,7 @@ impl Chunk {
     name: &str
   ) -> Result<usize, anyhow::Error> {
     let index = self.code[offset+1] as usize;
-    let constant = self.constants[index];
+    let constant = &self.constants[index];
     writeln!(w, "{name} @constants:{index} {constant}")?;
     Ok(offset + 2)
   }
@@ -230,7 +325,7 @@ impl Chunk {
     let part_a = self.code[offset+1] as usize;
     let part_b = self.code[offset+2] as usize;
     let index = part_a << 8 | part_b;
-    let constant = self.constants[index];
+    let constant = &self.constants[index];
     writeln!(w, "{name} @constants:{index} {constant}")?;
     Ok(offset + 3)
   }
@@ -356,6 +451,7 @@ mod tests {
 
   mod chunk {
     use super::*;
+    use Value as v;
 
     #[fixture]
     fn chunk_empty() -> Chunk {
@@ -372,7 +468,7 @@ mod tests {
     fn chunk_1_constant() -> Chunk {
       Chunk { 
         code: vec![Opcode::Constant as u8, 0],
-        constants: vec![1.0],
+        constants: vec![1.0.into()],
         lines: Lines {
           lines: vec![Line { line: 1, count: 2 }],
         },
@@ -383,7 +479,7 @@ mod tests {
     fn chunk_1_constant_long() -> Chunk {
       Chunk {
         code: vec![Opcode::ConstantLong as u8, 0, 0],
-        constants: vec![1.0],
+        constants: vec![1.0.into()],
         lines: Lines {
           lines: vec![Line { line: 1, count: 3 }]
         }
@@ -397,7 +493,7 @@ mod tests {
           Opcode::Constant as u8, 0,
           Opcode::Constant as u8, 1,
         ],
-        constants: vec![1.0, 2.0],
+        constants: vec![1.0.into(), 2.0.into()],
         lines: Lines {
           lines: vec![Line { line: 1, count: 4 }],
         },
@@ -412,7 +508,7 @@ mod tests {
           Opcode::Constant as u8, 1,
           Opcode::Constant as u8, 2,
         ],
-        constants: vec![1.0, 2.0, 3.0],
+        constants: vec![1.0.into(), 2.0.into(), 3.0.into()],
         lines: Lines {
           lines: vec![
             Line { line: 1, count: 2 },
@@ -432,7 +528,7 @@ mod tests {
           Opcode::Add as u8,
           Opcode::Return as u8,
         ],
-        constants: vec![1.0, 2.0],
+        constants: vec![1.0.into(), 2.0.into()],
         lines: Lines {
           lines: vec![
             Line { line: 1, count: 2 },
@@ -451,11 +547,11 @@ mod tests {
     }
 
     #[rstest]
-    #[case(chunk_empty(), 0.0, &[0.0])]
-    #[case(chunk_1_constant(), 0.0, &[1.0, 0.0])]
-    #[case(chunk_2_constant(), 0.0, &[1.0, 2.0, 0.0])]
-    #[case(chunk_3_constant_3_line(), 0.0, &[1.0, 2.0, 3.0, 0.0])]
-    #[case(chunk_2_constant_add_return_4_line(), 0.0, &[1.0, 2.0, 0.0])]
+    #[case(chunk_empty(), 0.0.into(), &[0.0.into()])]
+    #[case(chunk_1_constant(), 0.0.into(), &[1.0.into(), 0.0.into()])]
+    #[case(chunk_2_constant(), 0.0.into(), &[1.0.into(), 2.0.into(), 0.0.into()])]
+    #[case(chunk_3_constant_3_line(), 0.0.into(), &[1.0.into(), 2.0.into(), 3.0.into(), 0.0.into()])]
+    #[case(chunk_2_constant_add_return_4_line(), 0.0.into(), &[1.0.into(), 2.0.into(), 0.0.into()])]
     fn add_constant(
       #[case] mut chunk: Chunk,
       #[case] new_constant: Value,
