@@ -1,11 +1,10 @@
-
-use std::io;
 use std::fmt;
+use std::io;
 
 #[allow(unused_imports)]
 use anyhow::anyhow;
 
-use crate::chunk::{Chunk, Value, Opcode};
+use crate::chunk::{Chunk, Opcode, Value};
 
 #[derive(Debug)]
 pub enum VirtualMachineError {
@@ -88,29 +87,32 @@ impl VirtualMachine {
           eprint!(" {value} ");
         }
         eprintln!("]");
-        self.chunk.disassemble_opcodes(&mut io::stdout(), self.instruction_ptr)?;
+        self
+          .chunk
+          .disassemble_opcodes(&mut io::stdout(), self.instruction_ptr)?;
       }
 
       let instruction = self.read_byte();
       if let Ok(byte) = Opcode::try_from(instruction) {
         match byte {
           Opcode::Return => {
-            println!("\tret:{}", self.stack.pop());
-            break 'run;
-          },
+            //println!("\tret:{}", self.stack.pop());
+            //break 'run;
+            todo!()
+          }
           Opcode::Constant => {
             let c = self.read_constant();
             self.stack.push(c);
-          },
+          }
           Opcode::ConstantLong => {
             let c = self.read_constant_long();
             self.stack.push(c);
-          },
+          }
           Opcode::Negate => {
             let mut was_invalid = false;
             // update in place to avoid pop/push cycle
             #[allow(clippy::option_map_unit_fn)]
-            { 
+            {
               self.stack.stack.last_mut().map(|v| {
                 if let Value::Number(ref mut n) = v {
                   *n = -*n;
@@ -123,7 +125,7 @@ impl VirtualMachine {
               self.runtime_error("operands must be a number");
               return Err(anyhow!(VirtualMachineError::RuntimeError));
             }
-          },
+          }
           Opcode::Add => {
             let b = self.stack.pop();
             let a = self.stack.pop();
@@ -134,9 +136,9 @@ impl VirtualMachine {
               _ => {
                 self.runtime_error("operands must be numbers");
                 return Err(anyhow!(VirtualMachineError::RuntimeError));
-              },
+              }
             }
-          },
+          }
           Opcode::Subtract => {
             let b = self.stack.pop();
             let a = self.stack.pop();
@@ -146,9 +148,9 @@ impl VirtualMachine {
               _ => {
                 self.runtime_error("operands must be numbers");
                 return Err(anyhow!(VirtualMachineError::RuntimeError));
-              },
+              }
             }
-          },
+          }
           Opcode::Multiply => {
             let b = self.stack.pop();
             let a = self.stack.pop();
@@ -158,9 +160,9 @@ impl VirtualMachine {
               _ => {
                 self.runtime_error("operands must be numbers");
                 return Err(anyhow!(VirtualMachineError::RuntimeError));
-              },
+              }
             }
-          },
+          }
           Opcode::Divide => {
             let b = self.stack.pop();
             let a = self.stack.pop();
@@ -170,9 +172,9 @@ impl VirtualMachine {
               _ => {
                 self.runtime_error("operands must be numbers");
                 return Err(anyhow!(VirtualMachineError::RuntimeError));
-              },
+              }
             }
-          },
+          }
           Opcode::Nil => self.stack.push(Value::Nil),
           Opcode::True => self.stack.push(Value::Bool(true)),
           Opcode::False => self.stack.push(Value::Bool(false)),
@@ -180,12 +182,12 @@ impl VirtualMachine {
             let v = self.stack.pop();
             let is_falsy = v.is_falsy();
             self.stack.push(Value::Bool(is_falsy));
-          },
+          }
           Opcode::Equal => {
             let b = self.stack.pop();
             let a = self.stack.pop();
             self.stack.push(Value::Bool(a == b));
-          },
+          }
           Opcode::Less => {
             let b = self.stack.pop();
             let a = self.stack.pop();
@@ -195,9 +197,9 @@ impl VirtualMachine {
               _ => {
                 self.runtime_error("operands must be numbers");
                 return Err(anyhow!(VirtualMachineError::RuntimeError));
-              },
+              }
             }
-          },
+          }
           Opcode::Greater => {
             let b = self.stack.pop();
             let a = self.stack.pop();
@@ -207,9 +209,13 @@ impl VirtualMachine {
               _ => {
                 self.runtime_error("operands must be numbers");
                 return Err(anyhow!(VirtualMachineError::RuntimeError));
-              },
+              }
             }
-          },
+          }
+          Opcode::Print => println!("\"{}\"", self.stack.pop()),
+          Opcode::Pop => {
+            self.stack.pop();
+          }
         }
       } else {
         // add to error list
@@ -251,9 +257,8 @@ impl VirtualMachine {
 
 #[cfg(test)]
 mod tests {
-  use rstest::*;
-
   use super::*;
+  use rstest::*;
 
   mod virtual_machine_error {
     use super::*;
@@ -261,10 +266,7 @@ mod tests {
     #[rstest]
     #[case(VirtualMachineError::RuntimeError, "RuntimeError")]
     #[case(VirtualMachineError::CompileError, "CompileError")]
-    fn display_fmt(
-      #[case] variant: VirtualMachineError,
-      #[case] expected_debug_fmt: &str,
-     ) {
+    fn display_fmt(#[case] variant: VirtualMachineError, #[case] expected_debug_fmt: &str) {
       assert_eq!(format!("{variant:?}"), expected_debug_fmt);
     }
   }
@@ -275,9 +277,7 @@ mod tests {
 
     #[fixture]
     fn stack_empty() -> Stack {
-      Stack {
-        stack: Vec::new(),
-      }
+      Stack { stack: Vec::new() }
     }
 
     #[fixture]
@@ -305,11 +305,7 @@ mod tests {
     #[case(stack_empty(), 0.0.into(), &[0.0.into()])]
     #[case(stack_1_value(), 0.0.into(), &[1.0.into(), 0.0.into()])]
     #[case(stack_4_values(), 0.0.into(), &[1.0.into(), 2.0.into(), 3.0.into(), 4.0.into(), 0.0.into()])]
-    fn push(
-      #[case] mut stack: Stack,
-      #[case] value: Value,
-      #[case] expected_values: &[Value],
-    ) {
+    fn push(#[case] mut stack: Stack, #[case] value: Value, #[case] expected_values: &[Value]) {
       stack.push(value);
       assert_eq!(&stack.stack, expected_values);
     }
@@ -332,17 +328,15 @@ mod tests {
     #[case(stack_empty())]
     #[case(stack_1_value())]
     #[case(stack_4_values())]
-    fn reset(
-      #[case] mut stack: Stack,
-    ) {
+    fn reset(#[case] mut stack: Stack) {
       stack.reset();
       assert_eq!(&stack.stack, &[]);
     }
   }
 
   mod virtual_machine {
-    use crate::chunk::{Line, Lines};
     use super::*;
+    use crate::chunk::{Line, Lines};
     use Value as v;
 
     #[fixture]
@@ -354,8 +348,10 @@ mod tests {
     fn chunk_add_2() -> Chunk {
       Chunk {
         code: vec![
-          Opcode::Constant as u8, 0,
-          Opcode::Constant as u8, 1,
+          Opcode::Constant as u8,
+          0,
+          Opcode::Constant as u8,
+          1,
           Opcode::Add as u8,
           Opcode::Return as u8,
         ],
@@ -364,10 +360,10 @@ mod tests {
           lines: vec![
             Line { line: 1, count: 2 },
             Line { line: 2, count: 2 },
-            Line { line: 3, count: 1},
-            Line { line: 4, count: 1},
+            Line { line: 3, count: 1 },
+            Line { line: 4, count: 1 },
           ],
-        }
+        },
       }
     }
 
@@ -432,5 +428,4 @@ mod tests {
       todo!()
     }
   }
-
 }

@@ -1,12 +1,11 @@
-
 use std::fs;
 use std::io::{self, Write};
 
 #[allow(unused_imports)]
 use anyhow::anyhow;
 
-use crate::vm::VirtualMachine;
 use crate::compiler::Compiler;
+use crate::vm::VirtualMachine;
 
 /// Run the compiler with either a REPL or a file, based on args count
 ///
@@ -21,7 +20,7 @@ pub fn run(args: &[String]) -> Result<(), anyhow::Error> {
     1 => run_file(&args[0])?,
     _ => eprintln!("Usage: compiler <file_name>"),
   }
-  
+
   Ok(())
 }
 
@@ -54,8 +53,11 @@ fn run_repl() -> Result<(), anyhow::Error> {
 /// Will return `Err` if the following return an error;
 /// - `read_to_string`
 fn run_file<A: AsRef<str>>(file_path: A) -> Result<(), anyhow::Error> {
-  let file_string = fs::read_to_string(file_path.as_ref())?;
-  interpret(file_string)
+  let file_path = file_path.as_ref();
+  println!("running file: {file_path}...");
+  let file_string = fs::read_to_string(file_path)?;
+  let r = interpret(file_string);
+  r
 }
 
 /// Run compiler in REPL
@@ -66,7 +68,7 @@ fn run_file<A: AsRef<str>>(file_path: A) -> Result<(), anyhow::Error> {
 fn interpret<A: AsRef<str>>(command: A) -> Result<(), anyhow::Error> {
   let mut compiler = Compiler::new(command.as_ref());
   let chunk = compiler.compile()?;
-  
+
   let mut vm = VirtualMachine::new(chunk);
   vm.run()
 }

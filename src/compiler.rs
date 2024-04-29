@@ -1,12 +1,12 @@
-
-use std::io;
-use std::fmt;
 use std::cell::Cell;
+use std::fmt;
+use std::io;
 use std::iter::Peekable;
+use std::mem;
 
 use anyhow::anyhow;
 
-use crate::chunk::{Chunk, Value, Opcode};
+use crate::chunk::{Chunk, Opcode, Value};
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq)]
@@ -145,10 +145,7 @@ struct Scanner<'src> {
 
 impl<'src> Scanner<'src> {
   const fn new(source: &'src str) -> Self {
-    Self {
-      source,
-      line: 1,
-    }
+    Self { source, line: 1 }
   }
 
   fn scan_tokens(&mut self) -> Vec<Token> {
@@ -192,20 +189,27 @@ impl<'src> Scanner<'src> {
         '\n' => {
           self.line += 1;
           continue;
-        },
+        }
         ch if ch.is_ascii_whitespace() => continue,
         _ => TokenType::Invalid(ch.into()),
       };
-      tokens.push(Token { line: self.line, token_type, });
+      tokens.push(Token {
+        line: self.line,
+        token_type,
+      });
     }
-    tokens.push(Token { line: self.line, token_type: TokenType::Eof, });
+    tokens.push(Token {
+      line: self.line,
+      token_type: TokenType::Eof,
+    });
     tokens
   }
 
-  fn read_string<I>(last_matched: &mut char, it: &mut Peekable<I>) -> String 
-    where I: Iterator<Item = (usize, char)>, {
-    it
-      .by_ref()
+  fn read_string<I>(last_matched: &mut char, it: &mut Peekable<I>) -> String
+  where
+    I: Iterator<Item = (usize, char)>,
+  {
+    it.by_ref()
       .take_while(|(_, c)| {
         *last_matched = *c;
         *c != '"'
@@ -215,7 +219,9 @@ impl<'src> Scanner<'src> {
   }
 
   fn string_type<I>(it: &mut Peekable<I>) -> TokenType
-    where I: Iterator<Item = (usize, char)>, {
+  where
+    I: Iterator<Item = (usize, char)>,
+  {
     let mut last_matched: char = '\0';
     let s = Self::read_string(&mut last_matched, it);
     match last_matched {
@@ -224,13 +230,17 @@ impl<'src> Scanner<'src> {
     }
   }
 
-  fn read_number<I>(start: char, it: &mut Peekable<I>) -> String 
-    where I: Iterator<Item = (usize, char)>, {
+  fn read_number<I>(start: char, it: &mut Peekable<I>) -> String
+  where
+    I: Iterator<Item = (usize, char)>,
+  {
     Self::read_while(start, it, |(_, c)| c.is_ascii_digit() || *c == '.')
   }
 
   fn number_type<I>(start: char, it: &mut Peekable<I>) -> TokenType
-    where I: Iterator<Item = (usize, char)>, {
+  where
+    I: Iterator<Item = (usize, char)>,
+  {
     let num = Self::read_number(start, it);
     #[allow(clippy::option_if_let_else)]
     match num.parse() {
@@ -240,22 +250,24 @@ impl<'src> Scanner<'src> {
   }
 
   fn read_identifier<I>(start: char, it: &mut Peekable<I>) -> String
-    where I: Iterator<Item = (usize, char)>, {
+  where
+    I: Iterator<Item = (usize, char)>,
+  {
     Self::read_while(start, it, |(_, c)| c.is_alphanumeric() || *c == '_')
   }
 
   fn identifier_type<I>(start: char, it: &mut Peekable<I>) -> TokenType
-    where I: Iterator<Item = (usize, char)>, {
+  where
+    I: Iterator<Item = (usize, char)>,
+  {
     let ident = Self::read_identifier(start, it);
     TokenType::parse_keyword(&ident).map_or(TokenType::Identifier(ident), |t| t)
   }
 
-  fn read_while<I>(
-    start: char,
-    it: &mut Peekable<I>,
-    f: impl Fn(&(usize, char)) -> bool
-  ) -> String
-    where I: Iterator<Item = (usize, char)>, {
+  fn read_while<I>(start: char, it: &mut Peekable<I>, f: impl Fn(&(usize, char)) -> bool) -> String
+  where
+    I: Iterator<Item = (usize, char)>,
+  {
     let mut compose = String::new();
     let mut ch = start;
     loop {
@@ -274,15 +286,15 @@ impl<'src> Scanner<'src> {
 enum Precedence {
   #[default]
   None,
-  Assignment,  // =
-  Or,          // or
-  And,         // and
-  Equality,    // == !=
-  Comparison,  // < > <= >=
-  Term,        // + -
-  Factor,      // * /
-  Unary,       // ! -
-  Call,        // . ()
+  Assignment, // =
+  Or,         // or
+  And,        // and
+  Equality,   // == !=
+  Comparison, // < > <= >=
+  Term,       // + -
+  Factor,     // * /
+  Unary,      // ! -
+  Call,       // . ()
   Primary,
 }
 
@@ -316,9 +328,9 @@ struct ParserRule<'cnk, I> {
 
 impl<'cnk, I> ParserRule<'cnk, I> {
   fn new(
-    prefix: Option<ParserFn<'cnk, I>>, 
-    infix: Option<ParserFn<'cnk, I>>, 
-    precedence: Precedence
+    prefix: Option<ParserFn<'cnk, I>>,
+    infix: Option<ParserFn<'cnk, I>>,
+    precedence: Precedence,
   ) -> Self {
     Self {
       prefix,
@@ -345,12 +357,22 @@ struct Parser<'cnk, It> {
 }
 
 impl<'cnk, It> Parser<'cnk, It>
-  where It: Iterator<Item = Token>, {
-  fn new<T>(tokens: T, chunk: &'cnk mut Chunk) -> Self 
-    where T: IntoIterator<Item = It::Item, IntoIter = It>, {
+where
+  It: Iterator<Item = Token>,
+{
+  fn new<T>(tokens: T, chunk: &'cnk mut Chunk) -> Self
+  where
+    T: IntoIterator<Item = It::Item, IntoIter = It>,
+  {
     let mut this = Self {
-      current: Token { line: 1, token_type: TokenType::Eof, },
-      previous: Token { line: 1, token_type: TokenType::Eof, },
+      current: Token {
+        line: 1,
+        token_type: TokenType::Eof,
+      },
+      previous: Token {
+        line: 1,
+        token_type: TokenType::Eof,
+      },
       tokens: tokens.into_iter(),
       had_error: Cell::new(false),
       panic_mode: Cell::new(false),
@@ -367,7 +389,7 @@ impl<'cnk, It> Parser<'cnk, It>
         self.current = t;
       }
       match self.current.token_type {
-        TokenType::Invalid(_) => {},
+        TokenType::Invalid(_) => {}
         _ => break,
       }
       self.error_at_current(&self.current.to_string());
@@ -375,7 +397,7 @@ impl<'cnk, It> Parser<'cnk, It>
   }
 
   fn consume_if_eq(&mut self, token_type: &TokenType, msg: &str) {
-    if token_type == &self.current.token_type {
+    if mem::discriminant(token_type) == mem::discriminant(&self.current.token_type) {
       self.advance();
       return;
     }
@@ -402,7 +424,7 @@ impl<'cnk, It> Parser<'cnk, It>
 
   fn parse_unary(&mut self) {
     let token_type = self.previous.token_type.clone();
-    
+
     self.parse_precedence(Precedence::Unary);
 
     match token_type {
@@ -435,7 +457,7 @@ impl<'cnk, It> Parser<'cnk, It>
 
   fn parse_precedence(&mut self, precedence: Precedence) {
     self.advance();
-    
+
     let prefix_rule = Self::get_rule(&self.previous.token_type).prefix;
     if let Some(rule) = prefix_rule {
       rule(self);
@@ -471,6 +493,88 @@ impl<'cnk, It> Parser<'cnk, It>
     }
   }
 
+  fn parse_declaration(&mut self) {
+    if self.match_token(&TokenType::Var) {
+      self.parse_var_declaration();
+    } else {
+      self.parse_statement();
+    }
+    if self.panic_mode.get() {
+      self.synchronize();
+    }
+  }
+
+  fn parse_statement(&mut self) {
+    if self.match_token(&TokenType::Print) {
+      self.parse_print_statement();
+    } else {
+      self.parse_expression_statement();
+    }
+  }
+
+  fn parse_print_statement(&mut self) {
+    self.parse_expression();
+    self.consume_if_eq(&TokenType::Semicolon, "expect ';' after value");
+    self.emit_byte(Opcode::Print as u8);
+  }
+
+  fn parse_expression_statement(&mut self) {
+    self.parse_expression();
+    self.consume_if_eq(&TokenType::Semicolon, "expect ';' after expression");
+    self.emit_byte(Opcode::Pop as u8);
+  }
+
+  fn parse_var_declaration(&mut self) {
+    let global = self.parse_variable("expect variable name");
+
+    if self.match_token(&TokenType::Equal) {
+      self.parse_expression();
+    } else {
+      self.emit_byte(Opcode::Nil as u8);
+    }
+
+    self.consume_if_eq(
+      &TokenType::Semicolon,
+      "expect ';' after variable declaration",
+    );
+    self.define_variable(global);
+  }
+
+  fn parse_variable(&mut self, panic_message: &str) -> u8 {
+    self.consume_if_eq(&TokenType::Identifier(String::new()), panic_message);
+    return self.parse_identifier_constant();
+  }
+
+  fn define_variable(&mut self, index: u8) {
+    self.emit_2_bytes(Opcode::DefineGlobal as u8, index);
+  }
+
+  fn parse_identifier_constant(&mut self) -> u8 {
+    let value = Value::String(format!("{}", self.previous.token_type));
+    self.make_constant(value)
+  }
+
+  fn synchronize(&mut self) {
+    self.panic_mode.set(false);
+    while self.current.token_type != TokenType::Eof {
+      if self.previous.token_type == TokenType::Semicolon {
+        return;
+      }
+      match self.current.token_type {
+        TokenType::Class
+        | TokenType::Fun
+        | TokenType::Var
+        | TokenType::For
+        | TokenType::If
+        | TokenType::While
+        | TokenType::Print
+        | TokenType::Return => return,
+        _ => (),
+      }
+      self.advance();
+    }
+  }
+
   fn emit_return(&mut self) {
     self.emit_byte(Opcode::Return as u8);
   }
@@ -499,6 +603,18 @@ impl<'cnk, It> Parser<'cnk, It>
     self.emit_byte(byte_b);
   }
 
+  fn match_token(&mut self, token_type: &TokenType) -> bool {
+    if !self.check_token(token_type) {
+      return false;
+    }
+    self.advance();
+    true
+  }
+
+  fn check_token(&mut self, token_type: &TokenType) -> bool {
+    self.current.token_type == *token_type
+  }
+
   fn error(&self, msg: &str) {
     self.error_at(&self.previous, msg);
   }
@@ -512,7 +628,7 @@ impl<'cnk, It> Parser<'cnk, It>
       return;
     }
     self.panic_mode.set(true);
-    
+
     eprint!("[line {}] Error", token.line);
 
     match token.token_type {
@@ -527,86 +643,58 @@ impl<'cnk, It> Parser<'cnk, It>
   fn get_rule(token_type: &TokenType) -> ParserRule<'cnk, It> {
     #[allow(clippy::match_same_arms)]
     match token_type {
-      TokenType::LeftParen =>
-        ParserRule::new(Some(Self::parse_grouping), None, Precedence::None),
-      TokenType::RightParen =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::LeftBrace =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::RightBrace =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::Comma =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::Dot =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::Minus =>
-        ParserRule::new(Some(Self::parse_unary), Some(Self::parse_binary), Precedence::Term),
-      TokenType::Plus =>
-        ParserRule::new(None, Some(Self::parse_binary), Precedence::Term),
-      TokenType::Semicolon => 
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::Slash => 
-        ParserRule::new(None, Some(Self::parse_binary), Precedence::Factor),
-      TokenType::Star => 
-        ParserRule::new(None, Some(Self::parse_binary), Precedence::Factor),
-      TokenType::Bang =>
-        ParserRule::new(Some(Self::parse_unary), None, Precedence::None),
-      TokenType::Equal =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::BangEqual =>
-        ParserRule::new(None, Some(Self::parse_binary), Precedence::Equality),
-      TokenType::EqualEqual =>
-        ParserRule::new(None, Some(Self::parse_binary), Precedence::Equality),
-      TokenType::Greater =>
-        ParserRule::new(None, Some(Self::parse_binary), Precedence::Comparison),
-      TokenType::GreaterEqual =>
-        ParserRule::new(None, Some(Self::parse_binary), Precedence::Comparison),
-      TokenType::Less =>
-        ParserRule::new(None, Some(Self::parse_binary), Precedence::Comparison),
-      TokenType::LessEqual =>
-        ParserRule::new(None, Some(Self::parse_binary), Precedence::Comparison),
-      TokenType::Identifier(_) =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::StringLiteral(_) =>
-        ParserRule::new(Some(Self::parse_string), None, Precedence::None),
-      TokenType::Number(_) =>
-        ParserRule::new(Some(Self::parse_number), None, Precedence::None),
-      TokenType::And =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::Class =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::Else =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::False =>
-        ParserRule::new(Some(Self::parse_literal), None, Precedence::None),
-      TokenType::For =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::Fun =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::If =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::Nil =>
-        ParserRule::new(Some(Self::parse_literal), None, Precedence::None),
-      TokenType::Or =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::Print =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::Return =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::Super =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::This =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::True =>
-        ParserRule::new(Some(Self::parse_literal), None, Precedence::None),
-      TokenType::Var =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::While =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::Eof =>
-        ParserRule::new(None, None, Precedence::None),
-      TokenType::Invalid(_) =>
-        ParserRule::new(None, None, Precedence::None),
+      TokenType::LeftParen => ParserRule::new(Some(Self::parse_grouping), None, Precedence::None),
+      TokenType::RightParen => ParserRule::new(None, None, Precedence::None),
+      TokenType::LeftBrace => ParserRule::new(None, None, Precedence::None),
+      TokenType::RightBrace => ParserRule::new(None, None, Precedence::None),
+      TokenType::Comma => ParserRule::new(None, None, Precedence::None),
+      TokenType::Dot => ParserRule::new(None, None, Precedence::None),
+      TokenType::Minus => ParserRule::new(
+        Some(Self::parse_unary),
+        Some(Self::parse_binary),
+        Precedence::Term,
+      ),
+      TokenType::Plus => ParserRule::new(None, Some(Self::parse_binary), Precedence::Term),
+      TokenType::Semicolon => ParserRule::new(None, None, Precedence::None),
+      TokenType::Slash => ParserRule::new(None, Some(Self::parse_binary), Precedence::Factor),
+      TokenType::Star => ParserRule::new(None, Some(Self::parse_binary), Precedence::Factor),
+      TokenType::Bang => ParserRule::new(Some(Self::parse_unary), None, Precedence::None),
+      TokenType::Equal => ParserRule::new(None, None, Precedence::None),
+      TokenType::BangEqual => ParserRule::new(None, Some(Self::parse_binary), Precedence::Equality),
+      TokenType::EqualEqual => {
+        ParserRule::new(None, Some(Self::parse_binary), Precedence::Equality)
+      }
+      TokenType::Greater => ParserRule::new(None, Some(Self::parse_binary), Precedence::Comparison),
+      TokenType::GreaterEqual => {
+        ParserRule::new(None, Some(Self::parse_binary), Precedence::Comparison)
+      }
+      TokenType::Less => ParserRule::new(None, Some(Self::parse_binary), Precedence::Comparison),
+      TokenType::LessEqual => {
+        ParserRule::new(None, Some(Self::parse_binary), Precedence::Comparison)
+      }
+      TokenType::Identifier(_) => ParserRule::new(None, None, Precedence::None),
+      TokenType::StringLiteral(_) => {
+        ParserRule::new(Some(Self::parse_string), None, Precedence::None)
+      }
+      TokenType::Number(_) => ParserRule::new(Some(Self::parse_number), None, Precedence::None),
+      TokenType::And => ParserRule::new(None, None, Precedence::None),
+      TokenType::Class => ParserRule::new(None, None, Precedence::None),
+      TokenType::Else => ParserRule::new(None, None, Precedence::None),
+      TokenType::False => ParserRule::new(Some(Self::parse_literal), None, Precedence::None),
+      TokenType::For => ParserRule::new(None, None, Precedence::None),
+      TokenType::Fun => ParserRule::new(None, None, Precedence::None),
+      TokenType::If => ParserRule::new(None, None, Precedence::None),
+      TokenType::Nil => ParserRule::new(Some(Self::parse_literal), None, Precedence::None),
+      TokenType::Or => ParserRule::new(None, None, Precedence::None),
+      TokenType::Print => ParserRule::new(None, None, Precedence::None),
+      TokenType::Return => ParserRule::new(None, None, Precedence::None),
+      TokenType::Super => ParserRule::new(None, None, Precedence::None),
+      TokenType::This => ParserRule::new(None, None, Precedence::None),
+      TokenType::True => ParserRule::new(Some(Self::parse_literal), None, Precedence::None),
+      TokenType::Var => ParserRule::new(None, None, Precedence::None),
+      TokenType::While => ParserRule::new(None, None, Precedence::None),
+      TokenType::Eof => ParserRule::new(None, None, Precedence::None),
+      TokenType::Invalid(_) => ParserRule::new(None, None, Precedence::None),
     }
   }
 }
@@ -619,9 +707,7 @@ pub struct Compiler<'src> {
 impl<'src> Compiler<'src> {
   #[allow(clippy::must_use_candidate)]
   pub const fn new(source: &'src str) -> Self {
-    Self {
-      source,
-    }
+    Self { source }
   }
 
   /// Compile source code
@@ -633,9 +719,10 @@ impl<'src> Compiler<'src> {
     let mut chunk = Chunk::new();
     let mut scanner = Scanner::new(self.source);
     let mut parser = Parser::new(scanner.scan_tokens(), &mut chunk);
-    parser.parse_expression();
-    parser.consume_if_eq(&TokenType::Eof, "expected EOF");
-    parser.emit_return();
+
+    while !parser.match_token(&TokenType::Eof) {
+      parser.parse_declaration();
+    }
 
     let parser_had_error = parser.had_error.get();
 
@@ -643,7 +730,7 @@ impl<'src> Compiler<'src> {
       chunk.disassemble(&mut io::stdout(), "code")?;
     }
 
-    if parser_had_error { 
+    if parser_had_error {
       Err(anyhow!("parser had error"))
     } else {
       Ok(chunk)
@@ -751,5 +838,4 @@ mod tests {
       todo!()
     }
   }
-
 }

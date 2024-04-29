@@ -1,6 +1,5 @@
-
-use std::io;
 use std::fmt;
+use std::io;
 
 use anyhow::anyhow;
 
@@ -38,10 +37,6 @@ impl Value {
   pub const fn is_falsy(&self) -> bool {
     matches!(self, Self::Nil | Self::Bool(false))
   }
-
-  //pub fn is_truthy(&self) -> bool {
-  //  !self.is_falsy()
-  //}
 }
 
 impl From<bool> for Value {
@@ -101,6 +96,8 @@ pub enum Opcode {
   Equal = 12,
   Less = 13,
   Greater = 14,
+  Print = 15,
+  Pop = 16,
 }
 
 impl TryFrom<u8> for Opcode {
@@ -123,6 +120,8 @@ impl TryFrom<u8> for Opcode {
       12 => Self::Equal,
       13 => Self::Less,
       14 => Self::Greater,
+      15 => Self::Print,
+      16 => Self::Pop,
       _ => return Err(anyhow!("invalid opcode")),
     };
     Ok(result)
@@ -142,7 +141,7 @@ pub struct Lines {
 
 impl Lines {
   const fn new() -> Self {
-    Self { lines: Vec::new(), }
+    Self { lines: Vec::new() }
   }
 
   /// Get a line given the offset from 0
@@ -184,7 +183,7 @@ pub struct Chunk {
 impl Chunk {
   #[allow(clippy::must_use_candidate)]
   pub fn new() -> Self {
-    Self { 
+    Self {
       code: Vec::new(),
       constants: Vec::new(),
       lines: Lines::new(),
@@ -209,15 +208,16 @@ impl Chunk {
   /// - `writeln!()`
   /// - `self.disassemble_opcodes`
   pub fn disassemble<A: AsRef<str>>(
-    &self, 
-    w: &mut impl io::Write, 
-    name: A
+    &self,
+    w: &mut impl io::Write,
+    name: A,
   ) -> Result<(), anyhow::Error> {
     let name = name.as_ref();
     writeln!(w, "== {name} ==")?;
 
     let mut offset = 0;
     while offset < self.code.len() {
+      //println!("{offset} vs {}", self.code.len());
       write!(w, "{offset:04} ")?;
       if offset > 0 && self.lines.line(offset) == self.lines.line(offset - 1) {
         write!(w, "| ")?;
@@ -240,9 +240,9 @@ impl Chunk {
   /// - `self.disassemble_constant`
   /// - `self.disassemble_constant_long`
   pub fn disassemble_opcodes(
-    &self, 
-    w: &mut impl io::Write, 
-    offset: usize
+    &self,
+    w: &mut impl io::Write,
+    offset: usize,
   ) -> Result<usize, anyhow::Error> {
     let new_offset = {
       if let Ok(byte) = Opcode::try_from(self.code[offset]) {
@@ -262,6 +262,8 @@ impl Chunk {
           Opcode::Equal => self.disassemble_single(w, offset, "OP_EQUAL")?,
           Opcode::Less => self.disassemble_single(w, offset, "OP_LESS")?,
           Opcode::Greater => self.disassemble_single(w, offset, "OP_GREATER")?,
+          Opcode::Print => self.disassemble_single(w, offset, "OP_PRINT")?,
+          Opcode::Pop => self.disassemble_single(w, offset, "OP_POP")?,
         }
       } else {
         writeln!(w, "OP_INVALID @offset:{offset}")?;
@@ -281,9 +283,9 @@ impl Chunk {
   #[allow(clippy::unused_self)]
   fn disassemble_single(
     &self,
-    w: &mut impl io::Write, 
-    offset: usize, 
-    name: &str
+    w: &mut impl io::Write,
+    offset: usize,
+    name: &str,
   ) -> Result<usize, anyhow::Error> {
     writeln!(w, "{name}")?;
     Ok(offset + 1)
@@ -296,12 +298,12 @@ impl Chunk {
   /// Will return `Err` if the following return an error;
   /// - `writeln!()`
   fn disassemble_constant(
-    &self, 
-    w: &mut impl io::Write, 
-    offset: usize, 
-    name: &str
+    &self,
+    w: &mut impl io::Write,
+    offset: usize,
+    name: &str,
   ) -> Result<usize, anyhow::Error> {
-    let index = self.code[offset+1] as usize;
+    let index = self.code[offset + 1] as usize;
     let constant = &self.constants[index];
     writeln!(w, "{name} @constants:{index} {constant}")?;
     Ok(offset + 2)
@@ -314,13 +316,13 @@ impl Chunk {
   /// Will return `Err` if the following return an error;
   /// - `writeln!()`
   fn disassemble_constant_long(
-    &self, 
-    w: &mut impl io::Write, 
+    &self,
+    w: &mut impl io::Write,
     offset: usize,
-    name: &str
+    name: &str,
   ) -> Result<usize, anyhow::Error> {
-    let part_a = self.code[offset+1] as usize;
-    let part_b = self.code[offset+2] as usize;
+    let part_a = self.code[offset + 1] as usize;
+    let part_b = self.code[offset + 2] as usize;
     let index = part_a << 8 | part_b;
     let constant = &self.constants[index];
     writeln!(w, "{name} @constants:{index} {constant}")?;
@@ -330,9 +332,8 @@ impl Chunk {
 
 #[cfg(test)]
 mod tests {
-  use rstest::*;
-
   use super::*;
+  use rstest::*;
 
   mod opcode {
     use super::*;
@@ -346,10 +347,7 @@ mod tests {
     #[case(5, Opcode::Subtract)]
     #[case(6, Opcode::Multiply)]
     #[case(7, Opcode::Divide)]
-    fn try_from_u8(
-      #[case] _byte: u8,
-      #[case] _expected: Opcode,
-    ) {
+    fn try_from_u8(#[case] _byte: u8, #[case] _expected: Opcode) {
       assert_eq!(Opcode::try_from(_byte).unwrap(), _expected);
     }
   }
@@ -359,39 +357,36 @@ mod tests {
 
     #[fixture]
     fn lines_empty() -> Lines {
-      Lines { lines: Vec::new(), }
+      Lines { lines: Vec::new() }
     }
 
     #[fixture]
     fn lines_4_separate() -> Lines {
-      let mut lines = Lines { lines: Vec::new(), };
+      let mut lines = Lines { lines: Vec::new() };
       lines.lines = vec![
-        Line { line: 1, count: 1, },
-        Line { line: 2, count: 1, },
-        Line { line: 3, count: 1, },
-        Line { line: 4, count: 1, },
+        Line { line: 1, count: 1 },
+        Line { line: 2, count: 1 },
+        Line { line: 3, count: 1 },
+        Line { line: 4, count: 1 },
       ];
       lines
     }
 
     #[fixture]
     fn lines_4_2_joined() -> Lines {
-      let mut lines = Lines { lines: Vec::new(), };
-      lines.lines = vec![
-        Line { line: 1, count: 2, },
-        Line { line: 2, count: 2, },
-      ];
+      let mut lines = Lines { lines: Vec::new() };
+      lines.lines = vec![Line { line: 1, count: 2 }, Line { line: 2, count: 2 }];
       lines
     }
 
     #[fixture]
     fn lines_7_3_joined() -> Lines {
-      let mut lines = Lines { lines: Vec::new(), };
+      let mut lines = Lines { lines: Vec::new() };
       lines.lines = vec![
-        Line { line: 1, count: 2, },
-        Line { line: 2, count: 1, },
-        Line { line: 3, count: 2, },
-        Line { line: 4, count: 2, },
+        Line { line: 1, count: 2 },
+        Line { line: 2, count: 1 },
+        Line { line: 3, count: 2 },
+        Line { line: 4, count: 2 },
       ];
       lines
     }
@@ -419,11 +414,7 @@ mod tests {
     #[case(lines_7_3_joined(), 4, 3)]
     #[case(lines_7_3_joined(), 5, 4)]
     #[case(lines_7_3_joined(), 6, 4)]
-    fn line(
-      #[case] lines: Lines,
-      #[case] offset: usize,
-      #[case] expected_line: usize,
-    ) {
+    fn line(#[case] lines: Lines, #[case] offset: usize, #[case] expected_line: usize) {
       assert_eq!(lines.line(offset), expected_line);
     }
 
@@ -452,18 +443,16 @@ mod tests {
 
     #[fixture]
     fn chunk_empty() -> Chunk {
-      Chunk { 
+      Chunk {
         code: Vec::new(),
         constants: Vec::new(),
-        lines: Lines {
-          lines: Vec::new(),
-        },
+        lines: Lines { lines: Vec::new() },
       }
     }
 
     #[fixture]
     fn chunk_1_constant() -> Chunk {
-      Chunk { 
+      Chunk {
         code: vec![Opcode::Constant as u8, 0],
         constants: vec![1.0.into()],
         lines: Lines {
@@ -478,18 +467,15 @@ mod tests {
         code: vec![Opcode::ConstantLong as u8, 0, 0],
         constants: vec![1.0.into()],
         lines: Lines {
-          lines: vec![Line { line: 1, count: 3 }]
-        }
+          lines: vec![Line { line: 1, count: 3 }],
+        },
       }
     }
 
     #[fixture]
     fn chunk_2_constant() -> Chunk {
-      Chunk { 
-        code: vec![
-          Opcode::Constant as u8, 0,
-          Opcode::Constant as u8, 1,
-        ],
+      Chunk {
+        code: vec![Opcode::Constant as u8, 0, Opcode::Constant as u8, 1],
         constants: vec![1.0.into(), 2.0.into()],
         lines: Lines {
           lines: vec![Line { line: 1, count: 4 }],
@@ -499,11 +485,14 @@ mod tests {
 
     #[fixture]
     fn chunk_3_constant_3_line() -> Chunk {
-      Chunk { 
+      Chunk {
         code: vec![
-          Opcode::Constant as u8, 0,
-          Opcode::Constant as u8, 1,
-          Opcode::Constant as u8, 2,
+          Opcode::Constant as u8,
+          0,
+          Opcode::Constant as u8,
+          1,
+          Opcode::Constant as u8,
+          2,
         ],
         constants: vec![1.0.into(), 2.0.into(), 3.0.into()],
         lines: Lines {
@@ -518,10 +507,12 @@ mod tests {
 
     #[fixture]
     fn chunk_2_constant_add_return_4_line() -> Chunk {
-      Chunk { 
+      Chunk {
         code: vec![
-          Opcode::Constant as u8, 0,
-          Opcode::Constant as u8, 1,
+          Opcode::Constant as u8,
+          0,
+          Opcode::Constant as u8,
+          1,
           Opcode::Add as u8,
           Opcode::Return as u8,
         ],
@@ -536,7 +527,7 @@ mod tests {
         },
       }
     }
-    
+
     #[rstest]
     fn new() {
       let chunk = Chunk::new();
@@ -555,7 +546,7 @@ mod tests {
       #[case] expected_constants: &[Value],
     ) {
       let c = chunk.add_constant(new_constant);
-      assert_eq!(c, expected_constants.len()-1);
+      assert_eq!(c, expected_constants.len() - 1);
       assert_eq!(&chunk.constants, expected_constants);
     }
 
@@ -595,24 +586,33 @@ mod tests {
     }
 
     #[rstest]
-    #[case(chunk_empty(), r"== chunk ==
-")]
-    #[case(chunk_1_constant(), r"== chunk ==
+    #[case(
+      chunk_empty(),
+      r"== chunk ==
+"
+    )]
+    #[case(
+      chunk_1_constant(),
+      r"== chunk ==
 0000 1 OP_CONSTANT @constants:0 1
-")]
-    #[case(chunk_2_constant(), r"== chunk ==
+"
+    )]
+    #[case(
+      chunk_2_constant(),
+      r"== chunk ==
 0000 1 OP_CONSTANT @constants:0 1
 0002 | OP_CONSTANT @constants:1 2
-")]
-    #[case(chunk_3_constant_3_line(), r"== chunk ==
+"
+    )]
+    #[case(
+      chunk_3_constant_3_line(),
+      r"== chunk ==
 0000 1 OP_CONSTANT @constants:0 1
 0002 2 OP_CONSTANT @constants:1 2
 0004 3 OP_CONSTANT @constants:2 3
-")]
-    fn disassemble(
-      #[case] chunk: Chunk,
-      #[case] expected_disassembly: &str,
-    ) {
+"
+    )]
+    fn disassemble(#[case] chunk: Chunk, #[case] expected_disassembly: &str) {
       let mut buffer = StringWriter::default();
       // panic on failure
       chunk.disassemble(&mut buffer, "chunk").unwrap();
@@ -628,8 +628,16 @@ mod tests {
     #[case(chunk_3_constant_3_line(), 0, "OP_CONSTANT @constants:0 1\n")]
     #[case(chunk_3_constant_3_line(), 2, "OP_CONSTANT @constants:1 2\n")]
     #[case(chunk_3_constant_3_line(), 4, "OP_CONSTANT @constants:2 3\n")]
-    #[case(chunk_2_constant_add_return_4_line(), 0, "OP_CONSTANT @constants:0 1\n")]
-    #[case(chunk_2_constant_add_return_4_line(), 2, "OP_CONSTANT @constants:1 2\n")]
+    #[case(
+      chunk_2_constant_add_return_4_line(),
+      0,
+      "OP_CONSTANT @constants:0 1\n"
+    )]
+    #[case(
+      chunk_2_constant_add_return_4_line(),
+      2,
+      "OP_CONSTANT @constants:1 2\n"
+    )]
     #[case(chunk_2_constant_add_return_4_line(), 4, "OP_ADD\n")]
     #[case(chunk_2_constant_add_return_4_line(), 5, "OP_RETURN\n")]
     fn disassemble_opcodes(
@@ -656,7 +664,9 @@ mod tests {
       #[case] expected_disassembly: &str,
     ) {
       let mut buffer = StringWriter::default();
-      let new_offset = chunk.disassemble_single(&mut buffer, offset, instruction_name).unwrap();
+      let new_offset = chunk
+        .disassemble_single(&mut buffer, offset, instruction_name)
+        .unwrap();
       assert_eq!(new_offset, offset as usize + 1);
       assert_eq!(buffer.0, expected_disassembly);
     }
@@ -673,7 +683,9 @@ mod tests {
       #[case] expected_disassembly: &str,
     ) {
       let mut buffer = StringWriter::default();
-      let new_offset = chunk.disassemble_constant(&mut buffer, offset, "OP_CONSTANT").unwrap();
+      let new_offset = chunk
+        .disassemble_constant(&mut buffer, offset, "OP_CONSTANT")
+        .unwrap();
       assert_eq!(new_offset, offset + 2);
       assert_eq!(buffer.0, expected_disassembly);
     }
@@ -688,7 +700,9 @@ mod tests {
       #[case] expected_disassembly: &str,
     ) {
       let mut buffer = StringWriter::default();
-      let new_offset = chunk.disassemble_constant_long(&mut buffer, offset, "OP_CONSTANT_LONG").unwrap();
+      let new_offset = chunk
+        .disassemble_constant_long(&mut buffer, offset, "OP_CONSTANT_LONG")
+        .unwrap();
       assert_eq!(new_offset, offset + 3);
       assert_eq!(buffer.0, expected_disassembly);
     }
