@@ -1,0 +1,27 @@
+[package]
+name = "compiler"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "compiler"
+path = "src/lib.rs"
+
+[[bin]]
+name = "main"
+path = "src/bin/main.rs"
+
+[dependencies]
+anyhow = "1.0.86"
+thiserror = "1.0.63"
+
+[dev-dependencies]
+rstest = "0.21.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+nursery = { level = "deny", priority = 0 }
+pedantic = { level = "deny", priority = 2 }
+enum_glob_use = { level = "deny", priority = 1 }
