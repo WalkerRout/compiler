@@ -86,7 +86,10 @@ impl<'src> Lexer<'src> {
 
   fn eat_word(&mut self) -> Option<Token> {
     let mut buffer = String::new();
-    while self.peek_char().is_some_and(char::is_alphanumeric) {
+    while self
+      .peek_char()
+      .is_some_and(|c| c.is_alphanumeric() || c == '_')
+    {
       buffer.push(self.peekable.next()?);
     }
     let kind = lookup_identifier(buffer.as_str());
@@ -126,10 +129,10 @@ mod tests {
       #[fixture]
       pub fn invalid_characters() -> (&'static str, Vec<Token>) {
         (
-          r"let a = f @ j | k;",
+          r"let an_identifier_named_a = f @ j | k;",
           vec![
             Token::new(TokenKind::Let, "let"),
-            Token::new(TokenKind::Ident, "a"),
+            Token::new(TokenKind::Ident, "an_identifier_named_a"),
             Token::new(TokenKind::Assign, "="),
             Token::new(TokenKind::Ident, "f"),
             Token::new(TokenKind::Unknown, "@"),

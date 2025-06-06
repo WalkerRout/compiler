@@ -1,7 +1,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 
 use crate::ast::Visitor;
-use crate::interpreter::{Environment, InterpreterVisitor};
+use crate::interpreter::{Environment, Interpreter};
 use crate::lexer::Lexer;
 use crate::parser::Parser;
 
@@ -41,9 +41,8 @@ pub fn repl<R: Read, W: Write>(r#in: R, out: W) -> Result<(), anyhow::Error> {
         continue;
       }
     };
-    let mut interpreter = InterpreterVisitor {
-      environment: environment.clone(),
-    };
+    let mut interpreter = Interpreter::new(environment.clone());
+    println!("ast: {program:?}");
     let value = interpreter.visit_program(&program);
     println!("{value:?}");
   }

@@ -2,9 +2,9 @@ use std::iter::Peekable;
 use std::mem;
 
 use crate::ast::{
-  Block, Boolean, Dangling, Expression, FunctionCall, FunctionLiteral, Identifier, If, Infix,
-  InfixOperator, InfixOperatorError, Integer, Let, Prefix, PrefixOperator, PrefixOperatorError,
-  Program, Return, Statement, Str,
+  Array, Block, Boolean, Dangling, Expression, FunctionCall, FunctionLiteral, Identifier, If,
+  Index, Infix, InfixOperator, InfixOperatorError, Integer, Let, Prefix, PrefixOperator,
+  PrefixOperatorError, Program, Return, Statement, Str,
 };
 use crate::token::{Kind as TokenKind, Token};
 
@@ -35,7 +35,7 @@ impl Precedence {
       TokenKind::Lt | TokenKind::Gt => Self::LessGreater,
       TokenKind::Plus | TokenKind::Minus => Self::Sum,
       TokenKind::Asterisk | TokenKind::Slash => Self::Product,
-      TokenKind::LParen => Self::Call,
+      TokenKind::LParen | TokenKind::LBracket => Self::Call,
       _ => Self::Lowest,
     }
   }
@@ -230,6 +230,21 @@ impl PrefixParse for Str {
   }
 }
 
+impl PrefixParse for Array {
+  fn parse<I>(parser: &mut Parser<I>) -> Result<Self, ParserError>
+  where
+    I: Iterator<Item = Token>,
+  {
+    let token = parser.eat(TokenKind::LBracket)?;
+    let elements = parser.parse_comma_separated(TokenKind::RBracket, |parser| {
+      // parse each element as an expression with default lowest precedence
+      parser.parse_expression(Precedence::default())
+    })?;
+    let _ = parser.eat(TokenKind::RBracket)?;
+    Ok(Self { token, elements })
+  }
+}
+
 impl PrefixParse for Prefix {
   fn parse<I>(parser: &mut Parser<I>) -> Result<Self, ParserError>
   where
@@ -304,6 +319,22 @@ impl InfixParse for FunctionCall {
       token,
       function: Box::new(function),
       arguments,
+    })
+  }
+}
+
+impl InfixParse for Index {
+  fn parse<I>(parser: &mut Parser<I>, left: Expression) -> Result<Self, ParserError>
+  where
+    I: Iterator<Item = Token>,
+  {
+    let token = parser.eat(TokenKind::LBracket)?;
+    let index = parser.parse_expression(Precedence::default())?;
+    let _ = parser.eat(TokenKind::RBracket)?;
+    Ok(Self {
+      token,
+      left: Box::new(left),
+      index: Box::new(index),
     })
   }
 }
@@ -504,6 +535,7 @@ where
     TokenKind::Ident => Identifier::parse(parser).map(Into::into),
     TokenKind::Int => Integer::parse(parser).map(Into::into),
     TokenKind::String => Str::parse(parser).map(Into::into),
+    TokenKind::LBracket => Array::parse(parser).map(Into::into),
     TokenKind::True | TokenKind::False => Boolean::parse(parser).map(Into::into),
     TokenKind::Bang | TokenKind::Minus => Prefix::parse(parser).map(Into::into),
     TokenKind::If => If::parse(parser).map(Into::into),
@@ -527,6 +559,8 @@ where
       break;
     }
     left = match next_token.kind {
+      TokenKind::LParen => FunctionCall::parse(parser, left).map(Into::into)?,
+      TokenKind::LBracket => Index::parse(parser, left).map(Into::into)?,
       TokenKind::Plus
       | TokenKind::Minus
       | TokenKind::Asterisk
@@ -535,9 +569,8 @@ where
       | TokenKind::NotEq
       | TokenKind::Lt
       | TokenKind::Gt => Infix::parse(parser, left).map(Into::into)?,
-      TokenKind::LParen => FunctionCall::parse(parser, left).map(Into::into)?,
       _ => break,
-    }
+    };
   }
   Ok(left)
 }

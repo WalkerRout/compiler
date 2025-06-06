@@ -1,80 +1,13 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt;
 use std::rc::Rc;
 
 use crate::ast::{
-  Block, Boolean, Dangling, Expression, FunctionCall, FunctionLiteral, Identifier, If, Infix,
-  InfixOperator, Integer, Let, Prefix, PrefixOperator, Program, Return, Statement, Str, Visitor,
+  Array, Block, Boolean, Dangling, Expression, FunctionCall, FunctionLiteral, Identifier, If,
+  Index, Infix, InfixOperator, Integer, Let, Prefix, PrefixOperator, Program, Return, Statement,
+  Str, Visitor,
 };
-
-#[derive(Debug, Clone, thiserror::Error)]
-pub enum InterpreterError {
-  #[error("identifier not found: {0}")]
-  IdentifierNotFound(String),
-
-  #[error("type mismatch: {left_type} {operator} {right_type}")]
-  TypeMismatch {
-    left_type: String,
-    operator: String,
-    right_type: String,
-  },
-
-  #[error("unsupported operator: {operator} for type {operand_type}")]
-  UnsupportedOperator {
-    operator: String,
-    operand_type: String,
-  },
-
-  #[error("division by zero")]
-  DivisionByZero,
-
-  #[error("not a function: {0}")]
-  NotAFunction(String),
-
-  #[error("wrong number of arguments: expected {expected}, got {actual}")]
-  WrongArgumentCount { expected: usize, actual: usize },
-}
-
-pub struct InterpreterVisitor {
-  pub environment: Environment,
-}
-
-#[derive(Debug, Clone)]
-pub enum Value {
-  Integer(i64),
-  Boolean(bool),
-  String(String),
-  // todo might want to make this a struct, since we are passing in individual
-  // components to the apply_function helper -> only need to pass in one thing
-  Function {
-    parameters: Vec<Identifier>,
-    body: Block,
-    env: Environment,
-  },
-  Return(Box<Value>),
-  Null,
-}
-
-impl Value {
-  const fn is_truthy(&self) -> bool {
-    match self {
-      Self::Boolean(b) => *b,
-      Self::Null | Self::Integer(0) => false,
-      _ => true,
-    }
-  }
-
-  const fn type_name(&self) -> &'static str {
-    match self {
-      Self::Integer(_) => "INTEGER",
-      Self::Boolean(_) => "BOOLEAN",
-      Self::String(_) => "STRING",
-      Self::Function { .. } => "FUNCTION",
-      Self::Return(_) => "RETURN",
-      Self::Null => "NULL",
-    }
-  }
-}
 
 #[derive(Debug, Clone)]
 pub struct Environment {
@@ -120,124 +53,301 @@ impl Default for Environment {
   }
 }
 
-// helper for arithmetic, currently constrained to i64 cause im lazy, but
-// extending to other types is as easy as adding <T>
-trait ArithmeticOp {
-  fn apply(&self, left: i64, right: i64) -> Result<i64, InterpreterError>;
+#[derive(Clone)]
+pub struct Builtin {
+  name: &'static str,
+  // you CAN clone an rc, CANNOT clone a box... so we use rc...
+  func: Rc<dyn Fn(Vec<Value>) -> Result<Value, InterpreterError>>,
 }
 
-struct AddOp;
-impl ArithmeticOp for AddOp {
-  fn apply(&self, left: i64, right: i64) -> Result<i64, InterpreterError> {
-    Ok(left + right)
+impl fmt::Debug for Builtin {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(f, "Builtin({})", self.name)
   }
 }
 
-struct SubOp;
-impl ArithmeticOp for SubOp {
-  fn apply(&self, left: i64, right: i64) -> Result<i64, InterpreterError> {
-    Ok(left - right)
-  }
+#[derive(Debug, Clone)]
+pub enum Value {
+  Integer(i64),
+  Boolean(bool),
+  String(String),
+  Array(Vec<Value>),
+  // todo might want to make this a struct, since we are passing in individual
+  // components to the apply_function helper -> only need to pass in one thing
+  Function {
+    parameters: Vec<Identifier>,
+    body: Block,
+    env: Environment,
+  },
+  Return(Box<Value>),
+  Builtin(Builtin),
+  Null,
 }
 
-struct MulOp;
-impl ArithmeticOp for MulOp {
-  fn apply(&self, left: i64, right: i64) -> Result<i64, InterpreterError> {
-    Ok(left * right)
+impl Value {
+  const fn is_truthy(&self) -> bool {
+    match self {
+      Self::Boolean(b) => *b,
+      Self::Null | Self::Integer(0) => false,
+      _ => true,
+    }
   }
-}
 
-struct DivOp;
-impl ArithmeticOp for DivOp {
-  fn apply(&self, left: i64, right: i64) -> Result<i64, InterpreterError> {
-    if right == 0 {
-      Err(InterpreterError::DivisionByZero)
-    } else {
-      Ok(left / right)
+  const fn type_name(&self) -> &'static str {
+    match self {
+      Self::Integer(_) => "INTEGER",
+      Self::Boolean(_) => "BOOLEAN",
+      Self::String(_) => "STRING",
+      Self::Array(_) => "ARRAY",
+      Self::Function { .. } => "FUNCTION",
+      Self::Return(_) => "RETURN",
+      Self::Builtin(_) => "BUILTIN",
+      Self::Null => "NULL",
     }
   }
 }
 
-// helper for comparison
-trait ComparisonOp {
-  fn apply(&self, left: i64, right: i64) -> bool;
-}
+// todo use checked_ops for integer arithmetic, interpreter can crash on
+// over/underflow
+mod ops {
+  use super::{InfixOperator, InterpreterError, Value};
 
-struct LtOp;
-impl ComparisonOp for LtOp {
-  fn apply(&self, left: i64, right: i64) -> bool {
-    left < right
-  }
-}
-
-struct GtOp;
-impl ComparisonOp for GtOp {
-  fn apply(&self, left: i64, right: i64) -> bool {
-    left > right
-  }
-}
-
-impl InterpreterVisitor {
-  // helper for arithmetic
-  fn eval_arithmetic_op(
-    &self,
+  pub fn eval_infix(
+    operator: InfixOperator,
     left: &Value,
     right: &Value,
-    operator: InfixOperator,
-    op_impl: &dyn ArithmeticOp,
   ) -> Result<Value, InterpreterError> {
-    let _ = self; // not using as of now...
+    match operator {
+      InfixOperator::Add => add(left, right, operator),
+      InfixOperator::Sub => sub(left, right, operator),
+      InfixOperator::Mul => mul(left, right, operator),
+      InfixOperator::Div => div(left, right, operator),
+      InfixOperator::Lt => lt(left, right, operator),
+      InfixOperator::Gt => gt(left, right, operator),
+      InfixOperator::Eq => eq(left, right),
+      InfixOperator::Neq => neq(left, right),
+    }
+  }
+
+  #[inline]
+  fn add(left: &Value, right: &Value, operator: InfixOperator) -> Result<Value, InterpreterError> {
     match (left, right) {
-      (Value::Integer(l), Value::Integer(r)) => Ok(Value::Integer(op_impl.apply(*l, *r)?)),
+      (Value::Integer(l), Value::Integer(r)) => Ok(Value::Integer(l + r)),
+      (Value::String(l), Value::String(r)) => Ok(Value::String(l.clone() + r)),
       _ => Err(InterpreterError::TypeMismatch {
-        left_type: left.type_name().to_string(),
+        left_type: left.type_name().into(),
         operator: operator.to_string(),
-        right_type: right.type_name().to_string(),
+        right_type: right.type_name().into(),
       }),
     }
   }
 
-  // helper for comparison operations
-  fn eval_comparison_op(
-    &self,
-    left: &Value,
-    right: &Value,
-    operator: InfixOperator,
-    op_impl: &dyn ComparisonOp,
-  ) -> Result<Value, InterpreterError> {
-    let _ = self;
+  #[inline]
+  fn sub(left: &Value, right: &Value, operator: InfixOperator) -> Result<Value, InterpreterError> {
     match (left, right) {
-      (Value::Integer(l), Value::Integer(r)) => Ok(Value::Boolean(op_impl.apply(*l, *r))),
+      (Value::Integer(l), Value::Integer(r)) => Ok(Value::Integer(l - r)),
       _ => Err(InterpreterError::TypeMismatch {
-        left_type: left.type_name().to_string(),
+        left_type: left.type_name().into(),
         operator: operator.to_string(),
-        right_type: right.type_name().to_string(),
+        right_type: right.type_name().into(),
       }),
     }
   }
 
-  // helper for equality operations
-  fn eval_equality_op(
-    &self,
-    left: &Value,
-    right: &Value,
-    operator: InfixOperator,
-    is_eq: bool,
-  ) -> Result<Value, InterpreterError> {
-    let _ = self;
+  #[inline]
+  fn mul(left: &Value, right: &Value, operator: InfixOperator) -> Result<Value, InterpreterError> {
+    match (left, right) {
+      (Value::Integer(l), Value::Integer(r)) => Ok(Value::Integer(l * r)),
+      (Value::String(s), Value::Integer(n)) => {
+        if *n < 0 {
+          return Err(InterpreterError::UnsupportedOperator {
+            operator: "*".into(),
+            operand_type: "negative integer applied to string".into(),
+          });
+        }
+        // clippy prefers this for some reason, who am i to fight the formatter
+        usize::try_from(*n).map_or_else(
+          |_| {
+            Err(InterpreterError::UnsupportedOperator {
+              operator: "*".into(),
+              operand_type: "large integer applied to string".into(),
+            })
+          },
+          |n| Ok(Value::String(s.repeat(n))),
+        )
+      }
+      _ => Err(InterpreterError::TypeMismatch {
+        left_type: left.type_name().into(),
+        operator: operator.to_string(),
+        right_type: right.type_name().into(),
+      }),
+    }
+  }
+
+  #[inline]
+  fn div(left: &Value, right: &Value, operator: InfixOperator) -> Result<Value, InterpreterError> {
+    match (left, right) {
+      (Value::Integer(l), Value::Integer(r)) => {
+        if *r == 0 {
+          Err(InterpreterError::DivisionByZero)
+        } else {
+          Ok(Value::Integer(l / r))
+        }
+      }
+      _ => Err(InterpreterError::TypeMismatch {
+        left_type: left.type_name().into(),
+        operator: operator.to_string(),
+        right_type: right.type_name().into(),
+      }),
+    }
+  }
+
+  #[inline]
+  fn lt(left: &Value, right: &Value, operator: InfixOperator) -> Result<Value, InterpreterError> {
+    match (left, right) {
+      (Value::Integer(l), Value::Integer(r)) => Ok(Value::Boolean(l < r)),
+      _ => Err(InterpreterError::TypeMismatch {
+        left_type: left.type_name().into(),
+        operator: operator.to_string(),
+        right_type: right.type_name().into(),
+      }),
+    }
+  }
+
+  #[inline]
+  fn gt(left: &Value, right: &Value, operator: InfixOperator) -> Result<Value, InterpreterError> {
+    match (left, right) {
+      (Value::Integer(l), Value::Integer(r)) => Ok(Value::Boolean(l > r)),
+      _ => Err(InterpreterError::TypeMismatch {
+        left_type: left.type_name().into(),
+        operator: operator.to_string(),
+        right_type: right.type_name().into(),
+      }),
+    }
+  }
+
+  // eq never fails
+  #[inline]
+  #[allow(clippy::unnecessary_wraps)]
+  fn eq(left: &Value, right: &Value) -> Result<Value, InterpreterError> {
     let result = match (left, right) {
       (Value::Integer(l), Value::Integer(r)) => l == r,
       (Value::Boolean(l), Value::Boolean(r)) => l == r,
-      _ => {
-        return Err(InterpreterError::TypeMismatch {
-          left_type: left.type_name().to_string(),
-          operator: operator.to_string(),
-          right_type: right.type_name().to_string(),
-        })
-      }
+      (Value::String(l), Value::String(r)) => l == r,
+      (Value::Null, Value::Null) => true,
+      _ => false, // diff types not equal
     };
+    // `neq` depends on this function always returning the Value::Boolean variant
+    Ok(Value::Boolean(result))
+  }
 
-    Ok(Value::Boolean(if is_eq { result } else { !result }))
+  #[inline]
+  fn neq(left: &Value, right: &Value) -> Result<Value, InterpreterError> {
+    eq(left, right).map(|v| match v {
+      Value::Boolean(b) => Value::Boolean(!b),
+      // we know that `eq` always returns a Value::Boolean...
+      _ => unreachable!(),
+    })
+  }
+}
+
+// builtin functions like `len` and the like
+mod builtin {
+  use std::collections::HashMap;
+  use std::rc::Rc;
+
+  use super::{Builtin, InterpreterError, Value};
+
+  pub fn init() -> HashMap<&'static str, Value> {
+    let mut m = HashMap::new();
+    insert_builtin_len(&mut m);
+    m
+  }
+
+  fn insert_builtin_len(builtins: &mut HashMap<&'static str, Value>) {
+    builtins.insert(
+      "len",
+      Value::Builtin(Builtin {
+        name: "len",
+        func: Rc::new(|args: Vec<Value>| {
+          if args.len() != 1 {
+            return Err(InterpreterError::WrongArgumentCount {
+              expected: 1,
+              actual: args.len(),
+            });
+          }
+          match &args[0] {
+            Value::String(s) => Ok(Value::Integer(i64::try_from(s.len()).expect("todo"))),
+            Value::Array(a) => Ok(Value::Integer(i64::try_from(a.len()).expect("todo"))),
+            other => Err(InterpreterError::TypeMismatch {
+              left_type: other.type_name().into(),
+              operator: "len".into(),
+              right_type: String::new(),
+            }),
+          }
+        }),
+      }),
+    );
+  }
+}
+
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum InterpreterError {
+  #[error("identifier not found: {0}")]
+  IdentifierNotFound(String),
+
+  #[error("type mismatch: {left_type} {operator} {right_type}")]
+  TypeMismatch {
+    left_type: String,
+    operator: String,
+    right_type: String,
+  },
+
+  #[error("unsupported operator: {operator} for {operand_type}")]
+  UnsupportedOperator {
+    operator: String,
+    operand_type: String,
+  },
+
+  #[error("division by zero")]
+  DivisionByZero,
+
+  #[error("not a function: {0}")]
+  NotAFunction(String),
+
+  #[error("wrong number of arguments: expected {expected}, got {actual}")]
+  WrongArgumentCount { expected: usize, actual: usize },
+
+  #[error("index operator not supported for type {0}")]
+  IndexNotSupported(String),
+}
+
+pub struct Interpreter {
+  environment: Environment,
+  builtins: HashMap<&'static str, Value>,
+}
+
+impl Interpreter {
+  #[must_use]
+  pub fn new(environment: Environment) -> Self {
+    Self {
+      environment,
+      builtins: builtin::init(),
+    }
+  }
+
+  fn apply_index(left: &Value, index: &Value) -> Result<Value, InterpreterError> {
+    match (left, index) {
+      (Value::Array(elements), Value::Integer(i)) => {
+        match usize::try_from(*i) {
+          // we guarantee 0 <= uidx < elements.len(), unwrap is safe...
+          Ok(i) if i < elements.len() => Ok(elements.get(i).unwrap().clone()),
+          // all other cases (out of bounds, conversion error, etc) give null
+          _ => Ok(Value::Null),
+        }
+      }
+      _ => Err(InterpreterError::IndexNotSupported(left.type_name().into())),
+    }
   }
 
   // helper to apply a function (in component form) to some argument values...
@@ -248,7 +358,6 @@ impl InterpreterVisitor {
     env: Environment,
     args: &[Value],
   ) -> Result<Value, InterpreterError> {
-    let _ = self;
     if parameters.len() != args.len() {
       return Err(InterpreterError::WrongArgumentCount {
         expected: parameters.len(),
@@ -263,6 +372,7 @@ impl InterpreterVisitor {
 
     let mut new_visitor = Self {
       environment: new_env,
+      builtins: self.builtins.clone(),
     };
     let result = new_visitor.visit_block(body)?;
 
@@ -273,7 +383,7 @@ impl InterpreterVisitor {
   }
 }
 
-impl Visitor<Value> for InterpreterVisitor {
+impl Visitor<Value> for Interpreter {
   type Error = InterpreterError;
 
   fn visit_program(&mut self, program: &Program) -> Result<Value, Self::Error> {
@@ -332,6 +442,8 @@ impl Visitor<Value> for InterpreterVisitor {
       Expression::Integer(i) => self.visit_integer(i),
       Expression::Boolean(b) => self.visit_boolean(b),
       Expression::String(s) => self.visit_string(s),
+      Expression::Array(a) => self.visit_array(a),
+      Expression::Index(i) => self.visit_index(i),
       Expression::Prefix(p) => self.visit_prefix(p),
       Expression::Infix(i) => self.visit_infix(i),
       Expression::If(i) => self.visit_if(i),
@@ -341,10 +453,13 @@ impl Visitor<Value> for InterpreterVisitor {
   }
 
   fn visit_identifier(&mut self, ident: &Identifier) -> Result<Value, Self::Error> {
-    self
-      .environment
-      .get(&ident.value)
-      .ok_or_else(|| InterpreterError::IdentifierNotFound(ident.value.clone()))
+    if let Some(val) = self.environment.get(ident.value.as_str()) {
+      return Ok(val);
+    }
+    if let Some(builtin) = self.builtins.get(ident.value.as_str()) {
+      return Ok(builtin.clone());
+    }
+    Err(InterpreterError::IdentifierNotFound(ident.value.clone()))
   }
 
   fn visit_integer(&mut self, int: &Integer) -> Result<Value, Self::Error> {
@@ -357,6 +472,22 @@ impl Visitor<Value> for InterpreterVisitor {
 
   fn visit_string(&mut self, string: &Str) -> Result<Value, Self::Error> {
     Ok(Value::String(string.value.clone()))
+  }
+
+  fn visit_array(&mut self, array: &Array) -> Result<Value, Self::Error> {
+    let array: Result<Vec<_>, _> = array
+      .elements
+      .iter()
+      .map(|expr| self.visit_expression(expr))
+      .collect();
+    let array = array?;
+    Ok(Value::Array(array))
+  }
+
+  fn visit_index(&mut self, index: &Index) -> Result<Value, Self::Error> {
+    let left = self.visit_expression(&index.left)?;
+    let index = self.visit_expression(&index.index)?;
+    Self::apply_index(&left, &index)
   }
 
   fn visit_prefix(&mut self, prefix: &Prefix) -> Result<Value, Self::Error> {
@@ -376,20 +507,7 @@ impl Visitor<Value> for InterpreterVisitor {
   fn visit_infix(&mut self, infix: &Infix) -> Result<Value, Self::Error> {
     let left = self.visit_expression(&infix.left)?;
     let right = self.visit_expression(&infix.right)?;
-
-    match infix.operator {
-      // arithmetic
-      InfixOperator::Add => self.eval_arithmetic_op(&left, &right, infix.operator, &AddOp),
-      InfixOperator::Sub => self.eval_arithmetic_op(&left, &right, infix.operator, &SubOp),
-      InfixOperator::Mul => self.eval_arithmetic_op(&left, &right, infix.operator, &MulOp),
-      InfixOperator::Div => self.eval_arithmetic_op(&left, &right, infix.operator, &DivOp),
-      // comparison
-      InfixOperator::Lt => self.eval_comparison_op(&left, &right, infix.operator, &LtOp),
-      InfixOperator::Gt => self.eval_comparison_op(&left, &right, infix.operator, &GtOp),
-      // equality
-      InfixOperator::Eq => self.eval_equality_op(&left, &right, infix.operator, true),
-      InfixOperator::Neq => self.eval_equality_op(&left, &right, infix.operator, false),
-    }
+    ops::eval_infix(infix.operator, &left, &right)
   }
 
   fn visit_if(&mut self, if_expr: &If) -> Result<Value, Self::Error> {
@@ -426,10 +544,15 @@ impl Visitor<Value> for InterpreterVisitor {
         body,
         env,
       } => self.apply_function(&parameters, &body, env, &args),
-      _ => Err(InterpreterError::NotAFunction(
-        function.type_name().to_string(),
-      )),
+      Value::Builtin(builtin_fn) => (builtin_fn.func)(args),
+      _ => Err(InterpreterError::NotAFunction(function.type_name().into())),
     }
+  }
+}
+
+impl Default for Interpreter {
+  fn default() -> Self {
+    Self::new(Environment::new())
   }
 }
 
@@ -447,9 +570,7 @@ mod tests {
       Ok(program) => program,
       Err(errors) => panic!("Parser errors: {:?}", errors),
     };
-    let mut interpreter = InterpreterVisitor {
-      environment: Environment::new(),
-    };
+    let mut interpreter = Interpreter::default();
     interpreter.visit_program(&program)
   }
 

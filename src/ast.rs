@@ -97,6 +97,20 @@ pub trait Visitor<T> {
   /// Returns an error if the string cannot be processed
   fn visit_string(&mut self, string: &Str) -> Result<T, Self::Error>;
 
+  /// Visit an array literal node
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the array is malformed
+  fn visit_array(&mut self, array: &Array) -> Result<T, Self::Error>;
+
+  /// Visit an index expression such as list[0]
+  ///
+  /// # Errors
+  ///
+  /// Returns an error if the index access is malformed
+  fn visit_index(&mut self, index: &Index) -> Result<T, Self::Error>;
+
   /// Visit a prefix expression node (ex. `!x`, `-y`)
   ///
   /// # Errors
@@ -308,6 +322,8 @@ pub enum Expression {
   Integer(Integer),
   Boolean(Boolean),
   String(Str),
+  Array(Array),
+  Index(Index),
   Prefix(Prefix),
   Infix(Infix),
   If(If),
@@ -348,6 +364,18 @@ impl From<Str> for Expression {
   }
 }
 
+impl From<Array> for Expression {
+  fn from(array: Array) -> Self {
+    Self::Array(array)
+  }
+}
+
+impl From<Index> for Expression {
+  fn from(index: Index) -> Self {
+    Self::Index(index)
+  }
+}
+
 impl From<Prefix> for Expression {
   fn from(prefix: Prefix) -> Self {
     Self::Prefix(prefix)
@@ -385,6 +413,8 @@ impl fmt::Display for Expression {
       Self::Integer(integer) => write!(f, "{integer}"),
       Self::Boolean(boolean) => write!(f, "{boolean}"),
       Self::String(string) => write!(f, "{string}"),
+      Self::Array(array) => write!(f, "{array}"),
+      Self::Index(index) => write!(f, "{index}"),
       Self::Prefix(prefix) => write!(f, "{prefix}"),
       Self::Infix(infix) => write!(f, "{infix}"),
       // apparently format strings DO like raw literals...
@@ -477,6 +507,51 @@ impl<T> Visitable<T> for Str {
 impl fmt::Display for Str {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     write!(f, "\"{}\"", self.value)
+  }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Array {
+  pub token: Token,
+  pub elements: Vec<Expression>,
+}
+
+impl<T> Visitable<T> for Array {
+  fn accept<V>(&self, visitor: &mut V) -> Result<T, V::Error>
+  where
+    V: Visitor<T>,
+  {
+    visitor.visit_array(self)
+  }
+}
+
+impl fmt::Display for Array {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    // todo make this display nice
+    write!(f, "{:?}", self.elements)
+  }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Index {
+  pub token: Token,
+  pub left: Box<Expression>,
+  pub index: Box<Expression>,
+}
+
+impl<T> Visitable<T> for Index {
+  fn accept<V>(&self, visitor: &mut V) -> Result<T, V::Error>
+  where
+    V: Visitor<T>,
+  {
+    visitor.visit_index(self)
+  }
+}
+
+impl fmt::Display for Index {
+  fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+    // todo make this display nice
+    write!(f, "{}[{}]", self.left, self.index)
   }
 }
 
